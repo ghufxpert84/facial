@@ -1,35 +1,114 @@
 import json
-import os
-import secrets
 
-import bcrypt
-from fastapi import Depends, FastAPI, HTTPException, Request
-from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi.responses import RedirectResponse
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
-from db import get_conn
-
-DASHBOARD_USER = os.environ["DASHBOARD_USER"]
-DASHBOARD_PASSWORD_HASH = os.environ.get("DASHBOARD_PASSWORD_HASH", "")
-
-security = HTTPBasic()
+import telegram_connect
+from auth import (
+    AuthRedirect,
+    get_current_user,
+    hash_password,
+    login_user,
+    logout_user,
+    require_admin,
+    require_login,
+    verify_password,
+)
+from db import get_conn, get_secret_key, get_setting, set_setting
 
 app = FastAPI()
+app.add_middleware(SessionMiddleware, secret_key=get_secret_key())
 templates = Jinja2Templates(directory="templates")
 
 
-def verify(credentials: HTTPBasicCredentials = Depends(security)):
-    user_ok = secrets.compare_digest(credentials.username, DASHBOARD_USER)
-    pass_ok = bool(DASHBOARD_PASSWORD_HASH) and bcrypt.checkpw(
-        credentials.password.encode("utf-8"), DASHBOARD_PASSWORD_HASH.encode("utf-8")
-    )
-    if not (user_ok and pass_ok):
-        raise HTTPException(status_code=401, detail="Invalid credentials", headers={"WWW-Authenticate": "Basic"})
-    return credentials.username
+@app.exception_handler(AuthRedirect)
+async def auth_redirect_handler(request: Request, exc: AuthRedirect):
+    return RedirectResponse(exc.location, status_code=303)
+
+
+def _users_exist(conn) -> bool:
+    return conn.execute("SELECT 1 FROM users LIMIT 1").fetchone() is not None
+
+
+# --- setup / login / logout -------------------------------------------------
+
+
+@app.get("/setup")
+def setup_form(request: Request):
+    conn = get_conn()
+    try:
+        if _users_exist(conn):
+            return RedirectResponse("/login", status_code=303)
+    finally:
+        conn.close()
+    return templates.TemplateResponse("setup.html", {"request": request, "user": None, "error": None})
+
+
+@app.post("/setup")
+def setup_submit(request: Request, username: str = Form(...), password: str = Form(...)):
+    conn = get_conn()
+    try:
+        if _users_exist(conn):
+            return RedirectResponse("/login", status_code=303)
+        if len(password) < 8:
+            return templates.TemplateResponse(
+                "setup.html", {"request": request, "user": None, "error": "Password must be at least 8 characters."}
+            )
+        cur = conn.execute(
+            "INSERT INTO users (username, password_hash, role) VALUES (?, ?, 'admin')",
+            (username, hash_password(password)),
+        )
+        conn.commit()
+        user_id = cur.lastrowid
+    finally:
+        conn.close()
+    login_user(request, user_id)
+    return RedirectResponse("/", status_code=303)
+
+
+@app.get("/login")
+def login_form(request: Request):
+    conn = get_conn()
+    try:
+        if not _users_exist(conn):
+            return RedirectResponse("/setup", status_code=303)
+    finally:
+        conn.close()
+    if get_current_user(request) is not None:
+        return RedirectResponse("/", status_code=303)
+    return templates.TemplateResponse("login.html", {"request": request, "user": None, "error": None})
+
+
+@app.post("/login")
+def login_submit(request: Request, username: str = Form(...), password: str = Form(...)):
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT id, password_hash FROM users WHERE username = ?", (username,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or not verify_password(password, row[1]):
+        return templates.TemplateResponse(
+            "login.html", {"request": request, "user": None, "error": "Invalid username or password."}
+        )
+    login_user(request, row[0])
+    return RedirectResponse("/", status_code=303)
+
+
+@app.get("/logout")
+def logout(request: Request):
+    logout_user(request)
+    return RedirectResponse("/login", status_code=303)
+
+
+# --- dashboard ---------------------------------------------------------------
 
 
 @app.get("/")
-def worker_directory(request: Request, user: str = Depends(verify)):
+def worker_directory(request: Request, user: dict = Depends(require_login)):
     conn = get_conn()
     try:
         rows = conn.execute(
@@ -51,11 +130,11 @@ def worker_directory(request: Request, user: str = Depends(verify)):
         {"id": r[0], "name": r[1], "employee_id": r[2], "last_seen": r[3], "channel_name": r[4], "site_label": r[5]}
         for r in rows
     ]
-    return templates.TemplateResponse("index.html", {"request": request, "workers": workers})
+    return templates.TemplateResponse("index.html", {"request": request, "user": user, "workers": workers})
 
 
 @app.get("/workers/{worker_id}")
-def worker_detail(worker_id: int, request: Request, user: str = Depends(verify)):
+def worker_detail(worker_id: int, request: Request, user: dict = Depends(require_login)):
     conn = get_conn()
     try:
         w = conn.execute(
@@ -88,5 +167,261 @@ def worker_detail(worker_id: int, request: Request, user: str = Depends(verify))
 
     return templates.TemplateResponse(
         "worker_detail.html",
-        {"request": request, "worker": worker, "movement": movement, "field_reports": field_reports},
+        {"request": request, "user": user, "worker": worker, "movement": movement, "field_reports": field_reports},
     )
+
+
+# --- admin: users --------------------------------------------------------------
+
+
+@app.get("/admin/users")
+def admin_users(request: Request, user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        rows = conn.execute("SELECT id, username, role, created_at FROM users ORDER BY username").fetchall()
+    finally:
+        conn.close()
+    users = [{"id": r[0], "username": r[1], "role": r[2], "created_at": r[3]} for r in rows]
+    return templates.TemplateResponse(
+        "admin_users.html", {"request": request, "user": user, "users": users, "current_user": user, "error": None}
+    )
+
+
+@app.post("/admin/users/create")
+def admin_users_create(
+    request: Request,
+    username: str = Form(...),
+    password: str = Form(...),
+    role: str = Form(...),
+    user: dict = Depends(require_admin),
+):
+    conn = get_conn()
+    try:
+        if role not in ("admin", "viewer"):
+            raise HTTPException(status_code=400, detail="Invalid role")
+        try:
+            conn.execute(
+                "INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)",
+                (username, hash_password(password), role),
+            )
+            conn.commit()
+        except Exception:
+            rows = conn.execute("SELECT id, username, role, created_at FROM users ORDER BY username").fetchall()
+            users = [{"id": r[0], "username": r[1], "role": r[2], "created_at": r[3]} for r in rows]
+            return templates.TemplateResponse(
+                "admin_users.html",
+                {
+                    "request": request,
+                    "user": user,
+                    "users": users,
+                    "current_user": user,
+                    "error": f"Could not create user '{username}' — username may already exist.",
+                },
+            )
+    finally:
+        conn.close()
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@app.post("/admin/users/{target_id}/role")
+def admin_users_role(target_id: int, request: Request, role: str = Form(...), user: dict = Depends(require_admin)):
+    if target_id == user["id"]:
+        return RedirectResponse("/admin/users", status_code=303)
+    if role not in ("admin", "viewer"):
+        raise HTTPException(status_code=400, detail="Invalid role")
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE users SET role = ? WHERE id = ?", (role, target_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+@app.post("/admin/users/{target_id}/delete")
+def admin_users_delete(target_id: int, user: dict = Depends(require_admin)):
+    if target_id == user["id"]:
+        return RedirectResponse("/admin/users", status_code=303)
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM users WHERE id = ?", (target_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse("/admin/users", status_code=303)
+
+
+# --- admin: settings -------------------------------------------------------------
+
+
+@app.get("/admin/settings")
+def admin_settings(request: Request, user: dict = Depends(require_admin), saved: bool = False):
+    conn = get_conn()
+    try:
+        settings = {
+            "TG_CHANNELS": get_setting(conn, "TG_CHANNELS", ""),
+            "MATCH_THRESHOLD": get_setting(conn, "MATCH_THRESHOLD", "0.45"),
+            "RETENTION_DAYS": get_setting(conn, "RETENTION_DAYS", "90"),
+            "POLL_INTERVAL_SECONDS": get_setting(conn, "POLL_INTERVAL_SECONDS", "60"),
+        }
+    finally:
+        conn.close()
+    return templates.TemplateResponse(
+        "admin_settings.html", {"request": request, "user": user, "settings": settings, "saved": saved}
+    )
+
+
+@app.post("/admin/settings")
+def admin_settings_save(
+    request: Request,
+    tg_channels: str = Form(""),
+    match_threshold: str = Form("0.45"),
+    retention_days: str = Form("90"),
+    poll_interval_seconds: str = Form("60"),
+    user: dict = Depends(require_admin),
+):
+    conn = get_conn()
+    try:
+        set_setting(conn, "TG_CHANNELS", tg_channels)
+        set_setting(conn, "MATCH_THRESHOLD", match_threshold)
+        set_setting(conn, "RETENTION_DAYS", retention_days)
+        set_setting(conn, "POLL_INTERVAL_SECONDS", poll_interval_seconds)
+    finally:
+        conn.close()
+    return RedirectResponse("/admin/settings?saved=true", status_code=303)
+
+
+# --- admin: telegram connect wizard ----------------------------------------------
+
+
+@app.get("/admin/telegram")
+def admin_telegram(request: Request, user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        connected = bool(get_setting(conn, "TG_SESSION_STRING", None, decrypt=True))
+        settings = {"TG_API_ID": get_setting(conn, "TG_API_ID", "")}
+    finally:
+        conn.close()
+    stage = request.session.get("tg_wizard_stage", "idle")
+    return templates.TemplateResponse(
+        "admin_telegram.html",
+        {"request": request, "user": user, "connected": connected, "stage": stage, "settings": settings, "error": None},
+    )
+
+
+@app.post("/admin/telegram/send-code")
+async def admin_telegram_send_code(
+    request: Request,
+    api_id: str = Form(...),
+    api_hash: str = Form(...),
+    phone: str = Form(...),
+    user: dict = Depends(require_admin),
+):
+    try:
+        token = await telegram_connect.start_login(int(api_id), api_hash, phone)
+    except Exception as e:
+        return templates.TemplateResponse(
+            "admin_telegram.html",
+            {
+                "request": request,
+                "user": user,
+                "connected": False,
+                "stage": "idle",
+                "settings": {"TG_API_ID": api_id},
+                "error": str(e),
+            },
+        )
+    request.session["tg_wizard_token"] = token
+    request.session["tg_wizard_stage"] = "awaiting_code"
+    request.session["tg_wizard_api_id"] = api_id
+    request.session["tg_wizard_api_hash"] = api_hash
+    return RedirectResponse("/admin/telegram", status_code=303)
+
+
+async def _finish_telegram_login(conn, request: Request, api_id: str, api_hash: str, session_string: str):
+    set_setting(conn, "TG_API_ID", api_id)
+    set_setting(conn, "TG_API_HASH", api_hash, encrypt=True)
+    set_setting(conn, "TG_SESSION_STRING", session_string, encrypt=True)
+    request.session.pop("tg_wizard_token", None)
+    request.session.pop("tg_wizard_stage", None)
+    request.session.pop("tg_wizard_api_id", None)
+    request.session.pop("tg_wizard_api_hash", None)
+
+
+@app.post("/admin/telegram/verify-code")
+async def admin_telegram_verify_code(request: Request, code: str = Form(...), user: dict = Depends(require_admin)):
+    token = request.session.get("tg_wizard_token")
+    status, result = await telegram_connect.submit_code(token, code)
+    if status == "need_password":
+        request.session["tg_wizard_stage"] = "awaiting_password"
+        return RedirectResponse("/admin/telegram", status_code=303)
+    if status == "error":
+        return templates.TemplateResponse(
+            "admin_telegram.html",
+            {"request": request, "user": user, "connected": False, "stage": "awaiting_code", "settings": {}, "error": result},
+        )
+    conn = get_conn()
+    try:
+        await _finish_telegram_login(
+            conn, request, request.session.get("tg_wizard_api_id"), request.session.get("tg_wizard_api_hash"), result
+        )
+    finally:
+        conn.close()
+    return RedirectResponse("/admin/telegram", status_code=303)
+
+
+@app.post("/admin/telegram/verify-password")
+async def admin_telegram_verify_password(
+    request: Request, password: str = Form(...), user: dict = Depends(require_admin)
+):
+    token = request.session.get("tg_wizard_token")
+    status, result = await telegram_connect.submit_password(token, password)
+    if status == "error":
+        return templates.TemplateResponse(
+            "admin_telegram.html",
+            {
+                "request": request,
+                "user": user,
+                "connected": False,
+                "stage": "awaiting_password",
+                "settings": {},
+                "error": result,
+            },
+        )
+    conn = get_conn()
+    try:
+        await _finish_telegram_login(
+            conn, request, request.session.get("tg_wizard_api_id"), request.session.get("tg_wizard_api_hash"), result
+        )
+    finally:
+        conn.close()
+    return RedirectResponse("/admin/telegram", status_code=303)
+
+
+# --- admin: channels --------------------------------------------------------------
+
+
+@app.get("/admin/channels")
+def admin_channels(request: Request, user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        rows = conn.execute("SELECT id, name, site_label FROM channels ORDER BY name").fetchall()
+    finally:
+        conn.close()
+    channels = [{"id": r[0], "name": r[1], "site_label": r[2]} for r in rows]
+    return templates.TemplateResponse("admin_channels.html", {"request": request, "user": user, "channels": channels})
+
+
+@app.post("/admin/channels/{channel_id}/site-label")
+def admin_channels_site_label(
+    channel_id: int, request: Request, site_label: str = Form(""), user: dict = Depends(require_admin)
+):
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE channels SET site_label = ? WHERE id = ?", (site_label or None, channel_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse("/admin/channels", status_code=303)

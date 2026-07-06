@@ -62,6 +62,19 @@ CREATE TABLE IF NOT EXISTS field_reports (
     parsed_fields TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_field_reports_worker_ts ON field_reports (worker_id, timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('admin', 'viewer')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -72,3 +85,11 @@ def get_conn():
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.executescript(SCHEMA_SQL)
     return conn
+
+
+def get_setting(conn, key, default=None):
+    """Plain (unencrypted) settings only -- face-worker never touches the
+    Telegram credentials, so it has no need for the Fernet/cryptography
+    dependency the other two services carry."""
+    row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+    return row[0] if row is not None and row[0] is not None else default

@@ -1,21 +1,22 @@
 """Main face-worker loop: consumes raw_messages queued by telegram-listener,
-runs face recognition + field-report extraction, and purges expired data."""
+runs face recognition + field-report extraction, and purges expired data.
+
+MATCH_THRESHOLD/RETENTION_DAYS/POLL_INTERVAL_SECONDS are read from the
+app_settings table (set via the dashboard's Admin -> Settings page) fresh
+on every loop iteration, so changes there apply without a redeploy.
+"""
 import os
 import json
 import time
 import logging
 from datetime import datetime, timedelta, timezone
 
-from db import get_conn
+from db import get_conn, get_setting
 from recognize import match_faces
 from report_extractor import extract_field_report
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("face-worker")
-
-POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL_SECONDS", "60"))
-MATCH_THRESHOLD = float(os.environ.get("MATCH_THRESHOLD", "0.45"))
-RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "90"))
 
 
 def fetch_unprocessed(conn):
@@ -25,11 +26,11 @@ def fetch_unprocessed(conn):
     ).fetchall()
 
 
-def process_message(conn, msg_id, channel_id, timestamp, caption, photo_path):
+def process_message(conn, msg_id, channel_id, timestamp, caption, photo_path, match_threshold):
     sighting_by_worker = {}
 
     if photo_path and os.path.exists(photo_path):
-        for worker_id, confidence in match_faces(conn, photo_path, MATCH_THRESHOLD):
+        for worker_id, confidence in match_faces(conn, photo_path, match_threshold):
             cur = conn.execute(
                 """
                 INSERT INTO sightings (worker_id, channel_id, raw_message_id, timestamp, confidence, photo_path)
@@ -55,8 +56,8 @@ def process_message(conn, msg_id, channel_id, timestamp, caption, photo_path):
     conn.commit()
 
 
-def purge_expired(conn):
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)).isoformat()
+def purge_expired(conn, retention_days):
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
     paths = [
         row[0]
         for row in conn.execute(
@@ -74,16 +75,19 @@ def purge_expired(conn):
 
 def main():
     conn = get_conn()
-    log.info("face-worker started, threshold=%s retention_days=%s", MATCH_THRESHOLD, RETENTION_DAYS)
+    log.info("face-worker started")
     while True:
+        match_threshold = float(get_setting(conn, "MATCH_THRESHOLD", "0.45"))
+        retention_days = int(get_setting(conn, "RETENTION_DAYS", "90"))
+        poll_interval = int(get_setting(conn, "POLL_INTERVAL_SECONDS", "60"))
         try:
             for row in fetch_unprocessed(conn):
-                process_message(conn, *row)
-            purge_expired(conn)
+                process_message(conn, *row, match_threshold)
+            purge_expired(conn, retention_days)
         except Exception:
             log.exception("error in worker loop, will retry next interval")
             conn.rollback()
-        time.sleep(POLL_INTERVAL)
+        time.sleep(poll_interval)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Channels{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-6">Channels</h1>
+
+<div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+      <tr>
+        <th class="text-left px-4 py-2">Channel name</th>
+        <th class="text-left px-4 py-2">Site label</th>
+        <th class="px-4 py-2"></th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for c in channels %}
+      <tr>
+        <td class="px-4 py-2">{{ c.name }}</td>
+        <td class="px-4 py-2">
+          <form method="post" action="/admin/channels/{{ c.id }}/site-label" class="flex items-center gap-2">
+            <input name="site_label" value="{{ c.site_label or '' }}" placeholder="e.g. Project Site A" class="rounded border border-slate-300 text-sm px-2 py-1 w-56">
+            <button type="submit" class="text-xs text-slate-500 hover:text-slate-900 underline">save</button>
+          </form>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="px-4 py-6 text-center text-slate-400">No channels yet — they appear here once the listener processes its first message.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

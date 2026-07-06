@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block title %}Telegram{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-2">Telegram connection</h1>
+<p class="text-sm mb-6">
+  Status:
+  {% if connected %}
+  <span class="text-green-700 font-medium">connected</span>
+  {% else %}
+  <span class="text-amber-700 font-medium">not connected</span>
+  {% endif %}
+</p>
+
+{% if error %}
+<div class="mb-4 text-sm text-red-700 bg-red-50 border border-red-200 rounded-md px-3 py-2 max-w-lg">{{ error }}</div>
+{% endif %}
+
+<div class="max-w-lg bg-white border border-slate-200 rounded-xl shadow-sm p-6">
+  {% if stage == 'idle' %}
+  <h2 class="text-sm font-semibold mb-4">{{ 'Reconnect' if connected else 'Connect' }} your Telegram account</h2>
+  <form method="post" action="/admin/telegram/send-code" class="space-y-4">
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">API ID</label>
+      <input name="api_id" value="{{ settings.TG_API_ID or '' }}" required class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">API hash</label>
+      <input name="api_hash" type="password" required class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+      <p class="text-xs text-slate-400 mt-1">From my.telegram.org. Stored encrypted, never shown again.</p>
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">Phone number</label>
+      <input name="phone" placeholder="+60123456789" required class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+    </div>
+    <button type="submit" class="bg-slate-900 text-white rounded-md px-4 py-2 text-sm font-medium hover:bg-slate-800">Send code</button>
+  </form>
+
+  {% elif stage == 'awaiting_code' %}
+  <h2 class="text-sm font-semibold mb-4">Enter the login code</h2>
+  <p class="text-sm text-slate-500 mb-4">Telegram just sent a code to your account — enter it below.</p>
+  <form method="post" action="/admin/telegram/verify-code" class="space-y-4">
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">Login code</label>
+      <input name="code" required autofocus class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+    </div>
+    <button type="submit" class="bg-slate-900 text-white rounded-md px-4 py-2 text-sm font-medium hover:bg-slate-800">Verify</button>
+  </form>
+
+  {% elif stage == 'awaiting_password' %}
+  <h2 class="text-sm font-semibold mb-4">Two-factor password</h2>
+  <p class="text-sm text-slate-500 mb-4">Your account has 2FA enabled — enter your Telegram password.</p>
+  <form method="post" action="/admin/telegram/verify-password" class="space-y-4">
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">Password</label>
+      <input name="password" type="password" required autofocus class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+    </div>
+    <button type="submit" class="bg-slate-900 text-white rounded-md px-4 py-2 text-sm font-medium hover:bg-slate-800">Verify</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

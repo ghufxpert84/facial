@@ -1,40 +1,60 @@
 {% extends "base.html" %}
 {% block title %}{{ worker.name }}{% endblock %}
 {% block content %}
-<p><a href="/">&larr; back to directory</a></p>
-<h2>{{ worker.name }} <span class="muted">({{ worker.employee_id }})</span></h2>
-<p class="muted">Consent signed: {{ worker.consent_signed_at }}</p>
-{% if worker.notes %}<p>{{ worker.notes }}</p>{% endif %}
+<a href="/" class="text-sm text-slate-500 hover:text-slate-900">&larr; back to directory</a>
+<h1 class="text-xl font-semibold mt-2">{{ worker.name }} <span class="text-slate-400 font-normal">({{ worker.employee_id }})</span></h1>
+<p class="text-sm text-slate-500 mt-1">Consent signed: {{ worker.consent_signed_at }}</p>
+{% if worker.notes %}<p class="text-sm mt-2">{{ worker.notes }}</p>{% endif %}
 
-<h3>Movement history</h3>
-<table>
-  <tr><th>Timestamp</th><th>Site / Channel</th><th>Confidence</th></tr>
-  {% for m in movement %}
-  <tr>
-    <td>{{ m.timestamp }}</td>
-    <td><span class="badge">{{ m.site_label or m.channel_name }}</span></td>
-    <td>{{ "%.2f"|format(m.confidence) }}</td>
-  </tr>
-  {% else %}
-  <tr><td colspan="3" class="muted">No sightings yet.</td></tr>
-  {% endfor %}
-</table>
-
-<h3>Field reports</h3>
-<table>
-  <tr><th>Timestamp</th><th>Parsed fields</th><th>Raw text</th></tr>
-  {% for r in field_reports %}
-  <tr>
-    <td>{{ r.timestamp }}</td>
-    <td>
-      {% for k, v in (r.parsed_fields or {}).items() %}
-        <div><strong>{{ k }}:</strong> {{ v }}</div>
+<h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mt-8 mb-3">Movement history</h2>
+<div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+      <tr>
+        <th class="text-left px-4 py-2">Timestamp</th>
+        <th class="text-left px-4 py-2">Site / Channel</th>
+        <th class="text-left px-4 py-2">Confidence</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for m in movement %}
+      <tr>
+        <td class="px-4 py-2">{{ m.timestamp }}</td>
+        <td class="px-4 py-2"><span class="inline-block px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-medium">{{ m.site_label or m.channel_name }}</span></td>
+        <td class="px-4 py-2 text-slate-500">{{ "%.2f"|format(m.confidence) }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="px-4 py-6 text-center text-slate-400">No sightings yet.</td></tr>
       {% endfor %}
-    </td>
-    <td class="muted">{{ r.raw_text }}</td>
-  </tr>
-  {% else %}
-  <tr><td colspan="3" class="muted">No field reports yet.</td></tr>
-  {% endfor %}
-</table>
+    </tbody>
+  </table>
+</div>
+
+<h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mt-8 mb-3">Field reports</h2>
+<div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+      <tr>
+        <th class="text-left px-4 py-2">Timestamp</th>
+        <th class="text-left px-4 py-2">Parsed fields</th>
+        <th class="text-left px-4 py-2">Raw text</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for r in field_reports %}
+      <tr>
+        <td class="px-4 py-2 align-top">{{ r.timestamp }}</td>
+        <td class="px-4 py-2 align-top">
+          {% for k, v in (r.parsed_fields or {}).items() %}
+            <div><span class="font-medium">{{ k }}:</span> {{ v }}</div>
+          {% endfor %}
+        </td>
+        <td class="px-4 py-2 align-top text-slate-500">{{ r.raw_text }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="px-4 py-6 text-center text-slate-400">No field reports yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% endblock %}

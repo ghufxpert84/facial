@@ -1,10 +1,10 @@
 # Variant for pasting into Portainer's Stack "Web editor".
 #
-# Now on SQLite (see project chat history / commit log for why): no more
-# Postgres service, no healthcheck, no vector extension. Only plain ${VAR}
-# substitutions remain (Portainer handles those fine — it was only the
-# ${VAR:-default} fallback syntax and multi-variable-in-one-string patterns
-# that failed to resolve).
+# No environment variables at all anymore -- API credentials, thresholds,
+# retention, users, and everything else are configured through the web UI
+# (visit the dashboard, you'll be walked through /setup -> Admin pages) and
+# stored in the shared SQLite file. This also means Portainer's earlier
+# ${VAR} substitution quirks no longer matter here at all.
 #
 # Update the path below if you use a different folder than
 # /volume1/docker/telegram-worker-tracker-data.
@@ -13,12 +13,6 @@ services:
   telegram-listener:
     image: ghcr.io/ghufxpert84/facial-telegram-listener:latest
     restart: unless-stopped
-    environment:
-      TG_API_ID: ${TG_API_ID}
-      TG_API_HASH: ${TG_API_HASH}
-      TG_SESSION_STRING: ${TG_SESSION_STRING}
-      TG_CHANNELS: ${TG_CHANNELS}
-      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS}
     volumes:
       - /volume1/docker/telegram-worker-tracker-data/db:/data/db
       - /volume1/docker/telegram-worker-tracker-data/incoming:/data/incoming
@@ -26,10 +20,6 @@ services:
   face-worker:
     image: ghcr.io/ghufxpert84/facial-face-worker:latest
     restart: unless-stopped
-    environment:
-      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS}
-      MATCH_THRESHOLD: ${MATCH_THRESHOLD}
-      RETENTION_DAYS: ${RETENTION_DAYS}
     volumes:
       - /volume1/docker/telegram-worker-tracker-data/db:/data/db
       - /volume1/docker/telegram-worker-tracker-data/incoming:/data/incoming
@@ -38,9 +28,6 @@ services:
   dashboard:
     image: ghcr.io/ghufxpert84/facial-dashboard:latest
     restart: unless-stopped
-    environment:
-      DASHBOARD_USER: ${DASHBOARD_USER}
-      DASHBOARD_PASSWORD_HASH: ${DASHBOARD_PASSWORD_HASH}
     volumes:
       - /volume1/docker/telegram-worker-tracker-data/db:/data/db
     ports:

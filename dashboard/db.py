@@ -1,6 +1,11 @@
+import base64
+import os
 import sqlite3
 
+from cryptography.fernet import Fernet
+
 DB_PATH = "/data/db/tracker.db"
+SECRET_KEY_PATH = "/data/db/.secret_key"
 
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS workers (
@@ -62,6 +67,19 @@ CREATE TABLE IF NOT EXISTS field_reports (
     parsed_fields TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_field_reports_worker_ts ON field_reports (worker_id, timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS users (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    username TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    role TEXT NOT NULL CHECK (role IN ('admin', 'viewer')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
 """
 
 
@@ -72,3 +90,46 @@ def get_conn():
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.executescript(SCHEMA_SQL)
     return conn
+
+
+def get_secret_key():
+    """Returns the shared 32-byte secret (base64-encoded) used for session
+    signing and encrypting sensitive settings at rest. Generated once and
+    persisted to the shared /data/db volume so all three services agree on
+    the same key without any environment variable."""
+    try:
+        fd = os.open(SECRET_KEY_PATH, os.O_CREAT | os.O_WRONLY | os.O_EXCL, 0o600)
+        key = base64.urlsafe_b64encode(os.urandom(32))
+        with os.fdopen(fd, "wb") as f:
+            f.write(key)
+        return key
+    except FileExistsError:
+        with open(SECRET_KEY_PATH, "rb") as f:
+            return f.read()
+
+
+def _fernet():
+    return Fernet(get_secret_key())
+
+
+def get_setting(conn, key, default=None, decrypt=False):
+    row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (key,)).fetchone()
+    if row is None or row[0] is None:
+        return default
+    value = row[0]
+    if decrypt:
+        try:
+            return _fernet().decrypt(value.encode("utf-8")).decode("utf-8")
+        except Exception:
+            return default
+    return value
+
+
+def set_setting(conn, key, value, encrypt=False):
+    if encrypt:
+        value = _fernet().encrypt(value.encode("utf-8")).decode("utf-8")
+    conn.execute(
+        "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (key, value),
+    )
+    conn.commit()

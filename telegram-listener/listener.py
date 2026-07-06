@@ -1,10 +1,12 @@
 """Polls subscribed Telegram channels for new photo/text messages and queues
 them in SQLite for the face-worker service to process.
 
-Channels to watch are given via TG_CHANNELS (comma-separated usernames or
-numeric ids), e.g. "somefieldreports,-1001234567890".
+Unlike earlier versions, Telegram API credentials, the session string, and
+the channel watchlist all live in the app_settings table (set via the
+dashboard's Admin -> Telegram / Admin -> Settings pages), not environment
+variables. Until an admin connects Telegram through the web UI, this
+service waits patiently rather than crashing.
 """
-import os
 import time
 import logging
 
@@ -12,31 +14,27 @@ from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError
 
-from db import get_conn
+from db import get_conn, get_setting
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("listener")
 
-API_ID = int(os.environ["TG_API_ID"])
-API_HASH = os.environ["TG_API_HASH"]
-SESSION_STRING = os.environ.get("TG_SESSION_STRING", "")
-POLL_INTERVAL = int(os.environ.get("POLL_INTERVAL_SECONDS", "60"))
-CHANNELS = [c.strip() for c in os.environ.get("TG_CHANNELS", "").split(",") if c.strip()]
 
-if not SESSION_STRING:
-    raise SystemExit(
-        "TG_SESSION_STRING is not set. Run `docker compose run --rm "
-        "telegram-listener python login.py` once and put the result in .env."
-    )
-if not CHANNELS:
-    raise SystemExit("TG_CHANNELS is not set — list at least one channel to monitor.")
+def load_config(conn):
+    api_id = get_setting(conn, "TG_API_ID")
+    api_hash = get_setting(conn, "TG_API_HASH", decrypt=True)
+    session_string = get_setting(conn, "TG_SESSION_STRING", decrypt=True)
+    channels_raw = get_setting(conn, "TG_CHANNELS", "")
+    poll_interval = int(get_setting(conn, "POLL_INTERVAL_SECONDS", "60"))
+    channel_idents = [c.strip() for c in channels_raw.split(",") if c.strip()]
+    return api_id, api_hash, session_string, channel_idents, poll_interval
 
 
-def ensure_channel_rows(conn, client):
+def ensure_channel_rows(conn, client, channel_idents):
     """Upsert each configured channel into the channels table, return
     {telegram_id: (db_id, last_message_id)}."""
     rows = {}
-    for ident in CHANNELS:
+    for ident in channel_idents:
         entity = client.get_entity(ident)
         tg_id = entity.id
         name = getattr(entity, "title", None) or getattr(entity, "username", str(tg_id))
@@ -83,20 +81,41 @@ def poll_once(conn, client, channels):
 
 def main():
     conn = get_conn()
-    with TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH) as client:
-        channels = ensure_channel_rows(conn, client)
-        log.info("Watching channels: %s", [c["name"] for c in channels.values()])
-        while True:
-            try:
-                poll_once(conn, client, channels)
-            except FloodWaitError as e:
-                log.warning("Flood wait, sleeping %ss", e.seconds)
-                time.sleep(e.seconds)
-                continue
-            except Exception:
-                log.exception("Error during poll, will retry next interval")
-                conn.rollback()
-            time.sleep(POLL_INTERVAL)
+    client = None
+    active_session_string = None
+
+    while True:
+        api_id, api_hash, session_string, channel_idents, poll_interval = load_config(conn)
+
+        if not (api_id and api_hash and session_string and channel_idents):
+            if client is not None:
+                client.disconnect()
+                client = None
+                active_session_string = None
+            log.info("Waiting for Telegram to be connected via the admin UI (Admin -> Telegram)...")
+            time.sleep(10)
+            continue
+
+        if client is None or session_string != active_session_string:
+            if client is not None:
+                client.disconnect()
+            client = TelegramClient(StringSession(session_string), int(api_id), api_hash)
+            client.connect()
+            active_session_string = session_string
+            log.info("Telegram client (re)connected")
+
+        try:
+            channels = ensure_channel_rows(conn, client, channel_idents)
+            log.info("Watching channels: %s", [c["name"] for c in channels.values()])
+            poll_once(conn, client, channels)
+        except FloodWaitError as e:
+            log.warning("Flood wait, sleeping %ss", e.seconds)
+            time.sleep(e.seconds)
+            continue
+        except Exception:
+            log.exception("Error during poll, will retry next interval")
+            conn.rollback()
+        time.sleep(poll_interval)
 
 
 if __name__ == "__main__":
