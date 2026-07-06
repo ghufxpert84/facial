@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Branches{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-2">Branches</h1>
+<p class="text-sm text-slate-500 mb-6">
+  A branch is created automatically when you set a site label on
+  Admin &rarr; Channels — this page is where you fill in the extra details.
+  "Captured info" is the raw About text pulled from the channel itself on
+  first discovery or reset scan, shown for reference in case the
+  auto-extraction above it missed something.
+</p>
+
+<div class="space-y-4">
+  {% for b in branches %}
+  <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-6">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-sm font-semibold">{{ b.name }}</h2>
+      <span class="text-xs text-slate-400">{{ b.channel_count }} channel{{ 's' if b.channel_count != 1 }} linked</span>
+    </div>
+    <form method="post" action="/admin/branches/{{ b.id }}" class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div class="sm:col-span-2">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Address</label>
+        <input name="address" value="{{ b.address or '' }}" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+      </div>
+      <div class="sm:col-span-2">
+        <label class="block text-sm font-medium text-slate-700 mb-1">Map link</label>
+        <input name="map_url" value="{{ b.map_url or '' }}" placeholder="https://maps.google.com/..." class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+        {% if b.map_url %}<a href="{{ b.map_url }}" target="_blank" class="text-xs text-indigo-600 underline">open map</a>{% endif %}
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">Telegram contact</label>
+        <input name="telegram_contact" value="{{ b.telegram_contact or '' }}" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+      </div>
+      <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">WeChat contact</label>
+        <input name="wechat_contact" value="{{ b.wechat_contact or '' }}" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+      </div>
+      <div class="sm:col-span-2">
+        <button type="submit" class="bg-slate-900 text-white rounded-md px-4 py-2 text-sm font-medium hover:bg-slate-800">Save</button>
+      </div>
+    </form>
+    {% if b.captured_info %}
+    <details class="mt-4">
+      <summary class="text-xs text-slate-500 cursor-pointer">Captured info from channel</summary>
+      <pre class="text-xs text-slate-500 whitespace-pre-wrap mt-2 bg-slate-50 rounded-md p-3">{{ b.captured_info }}</pre>
+    </details>
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="text-slate-400 text-center py-8">
+    No branches yet — set a site label on Admin &rarr; Channels to create one.
+  </p>
+  {% endfor %}
+</div>
+{% endblock %}

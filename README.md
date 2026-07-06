@@ -133,6 +133,20 @@ localhost). Put it behind DSM's built-in reverse proxy with HTTPS
 (Let's Encrypt) and keep access to LAN/VPN only — this app holds biometric
 data and should never be reachable from the open internet.
 
+The worker directory has a **branch filter** — a dropdown to show only
+workers whose last-known site matches a selected branch. A photo's site
+label (Admin → Channels) automatically creates/links a **Branch** entity
+(Admin → Branches), where you can fill in address, a map link, and Telegram/
+WeChat contact details. When a channel is first discovered or its scan is
+reset, the system also fetches the channel's own Telegram "About" text and
+best-effort extracts `Address:`/`Telegram:`/`WeChat:` style lines into the
+branch automatically (never overwriting a manual edit) — the raw captured
+text is always kept too, in case the auto-extraction missed something.
+
+A worker's photo gallery uses an in-page **lightbox** (click a thumbnail to
+view full-size, or play a video, without leaving the page — Esc or click
+outside to close) instead of opening a new tab.
+
 Everything is stored in UTC (the correct practice — avoids ambiguity), but
 every timestamp shown in the UI is converted to **GMT+8** for display
 (column headers say so explicitly). If you're ever inspecting the database
@@ -176,6 +190,16 @@ Verified in this environment (no Docker/ML libs available here):
 - The shared secret-key file generation logic (used for session signing and
   encrypting Telegram credentials at rest) — verified it's created once and
   reused consistently, with `0600` permissions.
+- The duplicate-sightings bug (multiple identical photos in a worker's
+  gallery): reproduced the exact scenario from a real screenshot (3
+  sightings sharing one timestamp), confirmed the migration collapses them
+  to 1 and the new unique index + idempotent insert prevents it recurring.
+- Branch auto-creation/linking from a channel's site label, unlinking on
+  clear (branch record itself stays intact), and the channel-About-text
+  extraction into address/telegram/wechat fields (only filling empty
+  fields, never clobbering a manual edit).
+- The worker directory's branch filter query (unfiltered, filtered to a
+  specific branch, and a branch with zero workers).
 
 Still needs testing once you have the stack running (on the NAS or a Docker
 dev machine) — none of `bcrypt`, `cryptography`, `itsdangerous`, or

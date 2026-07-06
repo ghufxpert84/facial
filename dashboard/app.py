@@ -18,7 +18,7 @@ from auth import (
     require_login,
     verify_password,
 )
-from db import get_conn, get_secret_key, get_setting, set_setting
+from db import get_conn, get_or_create_branch, get_secret_key, get_setting, set_setting
 
 GMT8 = timezone(timedelta(hours=8))
 
@@ -37,6 +37,40 @@ def format_gmt8(value):
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(GMT8).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _apply_captured_info_to_branch(conn, branch_id, about):
+    """Best-effort Key: Value extraction from a channel's captured About
+    text into a branch's structured fields -- only fills fields still
+    empty, never overwrites a manual edit. Mirrors the same helper in
+    telegram-listener/listener.py (duplicated rather than shared, since
+    each service is a separate Docker build context)."""
+    conn.execute(
+        "UPDATE branches SET captured_info = ? WHERE id = ? AND (captured_info IS NULL OR captured_info = '')",
+        (about, branch_id),
+    )
+    for line in about.splitlines():
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key, value = key.strip().lower(), value.strip()
+        if not value:
+            continue
+        if "address" in key:
+            conn.execute(
+                "UPDATE branches SET address = ? WHERE id = ? AND (address IS NULL OR address = '')",
+                (value, branch_id),
+            )
+        elif "wechat" in key:
+            conn.execute(
+                "UPDATE branches SET wechat_contact = ? WHERE id = ? AND (wechat_contact IS NULL OR wechat_contact = '')",
+                (value, branch_id),
+            )
+        elif "telegram" in key:
+            conn.execute(
+                "UPDATE branches SET telegram_contact = ? WHERE id = ? AND (telegram_contact IS NULL OR telegram_contact = '')",
+                (value, branch_id),
+            )
 
 
 app = FastAPI()
@@ -130,7 +164,7 @@ def logout(request: Request):
 
 
 @app.get("/")
-def worker_directory(request: Request, user: dict = Depends(require_login)):
+def worker_directory(request: Request, user: dict = Depends(require_login), branch: str = ""):
     conn = get_conn()
     try:
         rows = conn.execute(
@@ -144,9 +178,12 @@ def worker_directory(request: Request, user: dict = Depends(require_login)):
                 FROM sightings
             ) ranked ON ranked.worker_id = w.id AND ranked.rn = 1
             LEFT JOIN channels c ON c.id = ranked.channel_id
+            WHERE (? = '' OR c.site_label = ?)
             ORDER BY w.name
-            """
+            """,
+            (branch, branch),
         ).fetchall()
+        branches = [r[0] for r in conn.execute("SELECT name FROM branches ORDER BY name").fetchall()]
     finally:
         conn.close()
 
@@ -162,7 +199,10 @@ def worker_directory(request: Request, user: dict = Depends(require_login)):
         }
         for r in rows
     ]
-    return templates.TemplateResponse("index.html", {"request": request, "user": user, "workers": workers})
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "user": user, "workers": workers, "branches": branches, "selected_branch": branch},
+    )
 
 
 @app.get("/workers/{worker_id}/avatar")
@@ -699,13 +739,86 @@ def admin_channels_site_label(
 ):
     conn = get_conn()
     try:
-        conn.execute(
-            "UPDATE channels SET site_label = ? WHERE id = ?", (site_label or None, channel_id)
-        )
+        site_label = site_label.strip() or None
+        conn.execute("UPDATE channels SET site_label = ? WHERE id = ?", (site_label, channel_id))
+        if site_label is None:
+            conn.execute("UPDATE channels SET branch_id = NULL WHERE id = ?", (channel_id,))
+        else:
+            branch_id = get_or_create_branch(conn, site_label)
+            conn.execute("UPDATE channels SET branch_id = ? WHERE id = ?", (branch_id, channel_id))
+            captured_info = conn.execute(
+                "SELECT captured_info FROM channels WHERE id = ?", (channel_id,)
+            ).fetchone()[0]
+            if captured_info:
+                _apply_captured_info_to_branch(conn, branch_id, captured_info)
         conn.commit()
     finally:
         conn.close()
     return RedirectResponse("/admin/channels", status_code=303)
+
+
+# --- admin: branches ---------------------------------------------------------------
+#
+# A branch's name is kept in sync with its channel's site_label (created/
+# linked from admin_channels_site_label above) -- Branches isn't where you
+# name a branch, it's where you fill in the extra details for one that
+# already exists.
+
+
+@app.get("/admin/branches")
+def admin_branches(request: Request, user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT b.id, b.name, b.address, b.map_url, b.telegram_contact, b.wechat_contact, b.captured_info,
+                   (SELECT COUNT(*) FROM channels c WHERE c.branch_id = b.id) AS channel_count
+            FROM branches b
+            ORDER BY b.name
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    branches = [
+        {
+            "id": r[0],
+            "name": r[1],
+            "address": r[2],
+            "map_url": r[3],
+            "telegram_contact": r[4],
+            "wechat_contact": r[5],
+            "captured_info": r[6],
+            "channel_count": r[7],
+        }
+        for r in rows
+    ]
+    return templates.TemplateResponse("admin_branches.html", {"request": request, "user": user, "branches": branches})
+
+
+@app.post("/admin/branches/{branch_id}")
+def admin_branches_save(
+    branch_id: int,
+    request: Request,
+    address: str = Form(""),
+    map_url: str = Form(""),
+    telegram_contact: str = Form(""),
+    wechat_contact: str = Form(""),
+    user: dict = Depends(require_admin),
+):
+    conn = get_conn()
+    try:
+        conn.execute(
+            """
+            UPDATE branches
+            SET address = ?, map_url = ?, telegram_contact = ?, wechat_contact = ?
+            WHERE id = ?
+            """,
+            (address or None, map_url or None, telegram_contact or None, wechat_contact or None, branch_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse("/admin/branches", status_code=303)
 
 
 # --- admin: unrecognized faces (review queue) ------------------------------------

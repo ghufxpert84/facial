@@ -1,7 +1,18 @@
 {% extends "base.html" %}
 {% block title %}Workers{% endblock %}
 {% block content %}
-<h1 class="text-xl font-semibold mb-6">Workers <span class="text-slate-400 font-normal">({{ workers|length }})</span></h1>
+<div class="flex items-center justify-between mb-6">
+  <h1 class="text-xl font-semibold">Workers <span class="text-slate-400 font-normal">({{ workers|length }})</span></h1>
+  <form method="get" action="/" class="flex items-center gap-2">
+    <label class="text-sm text-slate-500">Branch:</label>
+    <select name="branch" onchange="this.form.submit()" class="rounded-md border border-slate-300 text-sm px-2 py-1.5">
+      <option value="" {% if not selected_branch %}selected{% endif %}>All branches</option>
+      {% for b in branches %}
+      <option value="{{ b }}" {% if b == selected_branch %}selected{% endif %}>{{ b }}</option>
+      {% endfor %}
+    </select>
+  </form>
+</div>
 
 <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
   <table class="w-full text-sm">

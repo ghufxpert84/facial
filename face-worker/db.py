@@ -108,6 +108,17 @@ CREATE TABLE IF NOT EXISTS channel_watchlist (
     enabled INTEGER NOT NULL DEFAULT 1,
     added_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS branches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT UNIQUE NOT NULL,
+    address TEXT,
+    map_url TEXT,
+    telegram_contact TEXT,
+    wechat_contact TEXT,
+    captured_info TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -156,8 +167,61 @@ def get_conn():
         conn.commit()
     except sqlite3.OperationalError:
         pass
+    try:
+        conn.execute("ALTER TABLE channels ADD COLUMN branch_id INTEGER REFERENCES branches(id)")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE channels ADD COLUMN captured_info TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
     _migrate_tg_channels_setting_to_watchlist(conn)
+    _migrate_site_labels_to_branches(conn)
+    _dedupe_sightings(conn)
     return conn
+
+
+def get_or_create_branch(conn, name):
+    """Returns the branch id for `name`, creating it if it doesn't exist
+    yet. Branch names are kept in sync with channels.site_label -- this is
+    the one place that relationship is created/maintained."""
+    conn.execute("INSERT INTO branches (name) VALUES (?) ON CONFLICT(name) DO NOTHING", (name,))
+    return conn.execute("SELECT id FROM branches WHERE name = ?", (name,)).fetchone()[0]
+
+
+def _migrate_site_labels_to_branches(conn):
+    """Backfills a Branch entity for every channel that already has a
+    site_label but isn't linked to a branch yet -- e.g. channels labelled
+    before the Branches feature existed. Safe to run every connection: it's
+    a no-op once a channel is linked (branch_id IS NULL is the only
+    trigger), and it never touches an already-linked channel."""
+    rows = conn.execute(
+        "SELECT id, site_label FROM channels WHERE branch_id IS NULL AND site_label IS NOT NULL AND site_label != ''"
+    ).fetchall()
+    for channel_id, site_label in rows:
+        branch_id = get_or_create_branch(conn, site_label)
+        conn.execute("UPDATE channels SET branch_id = ? WHERE id = ?", (branch_id, channel_id))
+    conn.commit()
+
+
+def _dedupe_sightings(conn):
+    """Removes duplicate sighting rows (same worker matched twice against
+    the same message -- can happen if face-worker was ever restarted
+    mid-processing, or if two instances briefly ran concurrently during a
+    redeploy) and adds a unique index so it can't happen again. Keeps the
+    earliest row of each duplicate group."""
+    conn.execute(
+        "DELETE FROM sightings WHERE id NOT IN (SELECT MIN(id) FROM sightings GROUP BY worker_id, raw_message_id)"
+    )
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_sightings_worker_message ON sightings(worker_id, raw_message_id)"
+        )
+    except sqlite3.IntegrityError:
+        pass
+    conn.commit()
 
 
 def _migrate_tg_channels_setting_to_watchlist(conn):

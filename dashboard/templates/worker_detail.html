@@ -17,21 +17,22 @@
   still on disk. Shown at whatever resolution Telegram actually delivered —
   compressed photos are typically downsized by Telegram itself (~1280px on
   the long side), not necessarily the original camera resolution. Click a
-  tile to open the full-size photo (or play the video, where available) in
-  a new tab. Sighting photos disappear once purged (see retention setting).
+  tile to view it full-size (or play the video, where available) without
+  leaving this page. Sighting photos disappear once purged (see retention
+  setting).
 </p>
 <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
   {% for e in reference_photos %}
-  <a href="/workers/{{ worker.id }}/reference-photo/{{ e.id }}" target="_blank" class="block bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+  <div onclick="openLightboxImage('/workers/{{ worker.id }}/reference-photo/{{ e.id }}')" class="block cursor-pointer bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow">
     <img src="/workers/{{ worker.id }}/reference-photo/{{ e.id }}" class="w-full h-32 object-cover bg-slate-100" loading="lazy">
     <div class="p-2">
       <p class="text-xs font-medium text-slate-600">Reference photo</p>
       <p class="text-xs text-slate-400 truncate">{{ e.created_at | gmt8 }}</p>
     </div>
-  </a>
+  </div>
   {% endfor %}
   {% for m in movement if m.has_photo %}
-  <a href="{% if m.has_video %}/workers/{{ worker.id }}/video/{{ m.sighting_id }}{% else %}/workers/{{ worker.id }}/photo/{{ m.sighting_id }}{% endif %}" target="_blank" class="block relative bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+  <div onclick="{% if m.has_video %}openLightboxVideo('/workers/{{ worker.id }}/video/{{ m.sighting_id }}'){% else %}openLightboxImage('/workers/{{ worker.id }}/photo/{{ m.sighting_id }}'){% endif %}" class="block relative cursor-pointer bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow">
     <img src="/workers/{{ worker.id }}/photo/{{ m.sighting_id }}" class="w-full h-32 object-cover bg-slate-100" loading="lazy">
     {% if m.has_video %}
     <span class="absolute top-1 right-1 bg-black/60 text-white text-xs px-1.5 py-0.5 rounded">&#9658; video</span>
@@ -40,12 +41,56 @@
       <p class="text-xs text-slate-500 truncate">{{ m.site_label or m.channel_name }}</p>
       <p class="text-xs text-slate-400 truncate">{{ m.timestamp | gmt8 }}</p>
     </div>
-  </a>
+  </div>
   {% endfor %}
   {% if gallery_count == 0 %}
   <p class="text-slate-400 col-span-full text-center py-6">No photos available yet.</p>
   {% endif %}
 </div>
+
+<!-- Lightbox: click a thumbnail above to view full-size without leaving the page -->
+<div id="lightbox" class="fixed inset-0 bg-black/80 hidden items-center justify-center z-50" onclick="closeLightbox()">
+  <button onclick="closeLightbox()" class="absolute top-4 right-4 text-white text-3xl leading-none">&times;</button>
+  <img id="lightbox-img" src="" class="max-w-[90vw] max-h-[90vh] hidden" onclick="event.stopPropagation()">
+  <video id="lightbox-video" controls class="max-w-[90vw] max-h-[90vh] hidden" onclick="event.stopPropagation()"></video>
+</div>
+<script>
+  function openLightboxImage(src) {
+    const video = document.getElementById('lightbox-video');
+    video.pause();
+    video.src = '';
+    video.classList.add('hidden');
+    const img = document.getElementById('lightbox-img');
+    img.src = src;
+    img.classList.remove('hidden');
+    const box = document.getElementById('lightbox');
+    box.classList.remove('hidden');
+    box.classList.add('flex');
+  }
+  function openLightboxVideo(src) {
+    const img = document.getElementById('lightbox-img');
+    img.src = '';
+    img.classList.add('hidden');
+    const video = document.getElementById('lightbox-video');
+    video.src = src;
+    video.classList.remove('hidden');
+    const box = document.getElementById('lightbox');
+    box.classList.remove('hidden');
+    box.classList.add('flex');
+    video.play();
+  }
+  function closeLightbox() {
+    const box = document.getElementById('lightbox');
+    box.classList.add('hidden');
+    box.classList.remove('flex');
+    const video = document.getElementById('lightbox-video');
+    video.pause();
+    video.src = '';
+  }
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') closeLightbox();
+  });
+</script>
 
 <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mt-8 mb-3">Movement history</h2>
 <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">

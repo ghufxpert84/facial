@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError
+from telethon.tl.functions.channels import GetFullChannelRequest
+from telethon.tl.functions.messages import GetFullChatRequest
 
 from db import get_conn, get_setting, log_event, purge_old_logs
 
@@ -42,12 +44,16 @@ def ensure_channel_rows(conn, client, channel_idents):
     return {telegram_id: {...}}. If a channel has reset_scan set (from
     Admin -> Channels), resets last_message_id back to 0 so the next
     poll_once call re-scans from the History Pull Limit window again,
-    exactly like a newly-added channel."""
+    exactly like a newly-added channel. Channel info (About text) is
+    captured on a channel's first discovery and whenever it's reset."""
     rows = {}
     for ident in channel_idents:
         entity = client.get_entity(ident)
         tg_id = entity.id
         name = getattr(entity, "title", None) or getattr(entity, "username", str(tg_id))
+
+        is_new = conn.execute("SELECT 1 FROM channels WHERE telegram_channel_id = ?", (tg_id,)).fetchone() is None
+
         conn.execute(
             """
             INSERT INTO channels (telegram_channel_id, name, identifier) VALUES (?, ?, ?)
@@ -60,7 +66,8 @@ def ensure_channel_rows(conn, client, channel_idents):
             (tg_id,),
         ).fetchone()
 
-        if reset_scan:
+        was_reset = bool(reset_scan)
+        if was_reset:
             conn.execute("UPDATE channels SET last_message_id = 0, reset_scan = 0 WHERE id = ?", (db_id,))
             conn.commit()
             last_message_id = 0
@@ -72,6 +79,9 @@ def ensure_channel_rows(conn, client, channel_idents):
                 f"Reset scan for {name} back to the History Pull Limit window at admin's request",
             )
 
+        if is_new or was_reset:
+            capture_channel_info(conn, client, entity, db_id, name)
+
         rows[tg_id] = {
             "entity": entity,
             "db_id": db_id,
@@ -81,6 +91,64 @@ def ensure_channel_rows(conn, client, channel_idents):
         }
     conn.commit()
     return rows
+
+
+def capture_channel_info(conn, client, entity, db_id, name):
+    """Fetches the channel/group's About/description text from Telegram.
+    If a Branch is already linked (admin has set a site label), applies it
+    there directly with a best-effort Key: Value extraction into
+    address/telegram_contact/wechat_contact (only filling fields still
+    empty -- never overwrites a manual edit). Otherwise stores the raw text
+    on channels.captured_info so the dashboard can apply it once a branch
+    is linked later."""
+    try:
+        if hasattr(entity, "megagroup") or hasattr(entity, "broadcast"):
+            full = client(GetFullChannelRequest(entity))
+        else:
+            full = client(GetFullChatRequest(entity.id))
+        about = getattr(full.full_chat, "about", None)
+    except Exception:
+        log.warning("Could not fetch channel info for %s", name, exc_info=True)
+        return
+    if not about:
+        return
+
+    conn.execute("UPDATE channels SET captured_info = ? WHERE id = ?", (about, db_id))
+    branch_id = conn.execute("SELECT branch_id FROM channels WHERE id = ?", (db_id,)).fetchone()[0]
+    if branch_id is not None:
+        _apply_captured_info_to_branch(conn, branch_id, about)
+    conn.commit()
+    log.info("Captured channel info for %s", name)
+    log_event(conn, SERVICE_NAME, "info", f"Captured channel info for {name}")
+
+
+def _apply_captured_info_to_branch(conn, branch_id, about):
+    conn.execute(
+        "UPDATE branches SET captured_info = ? WHERE id = ? AND (captured_info IS NULL OR captured_info = '')",
+        (about, branch_id),
+    )
+    for line in about.splitlines():
+        if ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key, value = key.strip().lower(), value.strip()
+        if not value:
+            continue
+        if "address" in key:
+            conn.execute(
+                "UPDATE branches SET address = ? WHERE id = ? AND (address IS NULL OR address = '')",
+                (value, branch_id),
+            )
+        elif "wechat" in key:
+            conn.execute(
+                "UPDATE branches SET wechat_contact = ? WHERE id = ? AND (wechat_contact IS NULL OR wechat_contact = '')",
+                (value, branch_id),
+            )
+        elif "telegram" in key:
+            conn.execute(
+                "UPDATE branches SET telegram_contact = ? WHERE id = ? AND (telegram_contact IS NULL OR telegram_contact = '')",
+                (value, branch_id),
+            )
 
 
 def poll_once(conn, client, channels, history_pull_hours):

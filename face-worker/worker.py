@@ -48,14 +48,22 @@ def process_message(conn, msg_id, channel_id, timestamp, caption, photo_path, vi
     if match_image_path and os.path.exists(match_image_path):
         matches, unmatched = match_faces(conn, match_image_path, match_threshold)
         for worker_id, confidence in matches:
-            cur = conn.execute(
+            # ON CONFLICT DO NOTHING against the (worker_id, raw_message_id)
+            # unique index: if this message somehow gets processed twice
+            # (e.g. face-worker restarted mid-cycle, or briefly ran two
+            # instances during a redeploy), this stays idempotent instead
+            # of creating duplicate gallery entries for the same photo.
+            conn.execute(
                 """
                 INSERT INTO sightings (worker_id, channel_id, raw_message_id, timestamp, confidence, photo_path, video_path)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(worker_id, raw_message_id) DO NOTHING
                 """,
                 (worker_id, channel_id, msg_id, timestamp, confidence, match_image_path, video_path),
             )
-            sighting_by_worker[worker_id] = cur.lastrowid
+            sighting_by_worker[worker_id] = conn.execute(
+                "SELECT id FROM sightings WHERE worker_id = ? AND raw_message_id = ?", (worker_id, msg_id)
+            ).fetchone()[0]
         candidates.stage_unmatched_faces(conn, unmatched, match_image_path, channel_id, msg_id, match_threshold)
 
     parsed = extract_field_report(caption)
