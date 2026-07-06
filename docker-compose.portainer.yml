@@ -1,0 +1,77 @@
+# Variant for pasting into Portainer's Stack "Web editor".
+#
+# Portainer's stack "Environment variables" UI does not reliably interpolate
+# ${VAR:-default}-style fallback syntax in volume paths (confirmed: it kept
+# falling back to the literal default, e.g. "./data", even with DATA_DIR set,
+# causing "Bind mount failed: ... does not exist" against Portainer's own
+# internal stack directory). Plain ${VAR} refs (no default) in `environment:`
+# blocks work fine — only the volumes' default-value syntax was the problem.
+#
+# So this variant hardcodes the absolute data path instead of using
+# ${DATA_DIR:-./data}. Update the path below if you use a different folder
+# than /volume1/docker/telegram-worker-tracker-data.
+#
+# For SSH/CLI deploys (`docker compose up`), use docker-compose.yml instead —
+# real docker-compose reads .env properly and DATA_DIR works as intended there.
+
+services:
+  db:
+    image: ghcr.io/ghufxpert84/facial-db:latest
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - /volume1/docker/telegram-worker-tracker-data/db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  telegram-listener:
+    image: ghcr.io/ghufxpert84/facial-telegram-listener:latest
+    restart: unless-stopped
+    environment:
+      TG_API_ID: ${TG_API_ID}
+      TG_API_HASH: ${TG_API_HASH}
+      TG_SESSION_STRING: ${TG_SESSION_STRING}
+      TG_CHANNELS: ${TG_CHANNELS}
+      DATABASE_URL: ${DATABASE_URL}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS}
+    volumes:
+      - /volume1/docker/telegram-worker-tracker-data/incoming:/data/incoming
+    depends_on:
+      db:
+        condition: service_healthy
+
+  face-worker:
+    image: ghcr.io/ghufxpert84/facial-face-worker:latest
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS}
+      MATCH_THRESHOLD: ${MATCH_THRESHOLD}
+      RETENTION_DAYS: ${RETENTION_DAYS}
+    volumes:
+      - /volume1/docker/telegram-worker-tracker-data/incoming:/data/incoming
+      - /volume1/docker/telegram-worker-tracker-data/enrolled:/data/enrolled
+    depends_on:
+      db:
+        condition: service_healthy
+
+  dashboard:
+    image: ghcr.io/ghufxpert84/facial-dashboard:latest
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      DASHBOARD_USER: ${DASHBOARD_USER}
+      DASHBOARD_PASSWORD_HASH: ${DASHBOARD_PASSWORD_HASH}
+    volumes:
+      - /volume1/docker/telegram-worker-tracker-data/incoming:/data/incoming:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
