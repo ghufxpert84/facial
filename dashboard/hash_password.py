@@ -4,10 +4,9 @@ Usage: docker compose run --rm dashboard python hash_password.py 'your-password'
 """
 import sys
 
-from passlib.context import CryptContext
+import bcrypt
 
 if len(sys.argv) != 2:
     raise SystemExit("Usage: python hash_password.py 'your-password'")
 
-pwd_context = CryptContext(schemes=["bcrypt"])
-print(pwd_context.hash(sys.argv[1]))
+print(bcrypt.hashpw(sys.argv[1].encode("utf-8"), bcrypt.gensalt()).decode("utf-8"))

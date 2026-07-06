@@ -2,17 +2,16 @@ import json
 import os
 import secrets
 
+import bcrypt
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.templating import Jinja2Templates
-from passlib.context import CryptContext
 
 from db import get_conn
 
 DASHBOARD_USER = os.environ["DASHBOARD_USER"]
 DASHBOARD_PASSWORD_HASH = os.environ.get("DASHBOARD_PASSWORD_HASH", "")
 
-pwd_context = CryptContext(schemes=["bcrypt"])
 security = HTTPBasic()
 
 app = FastAPI()
@@ -21,7 +20,9 @@ templates = Jinja2Templates(directory="templates")
 
 def verify(credentials: HTTPBasicCredentials = Depends(security)):
     user_ok = secrets.compare_digest(credentials.username, DASHBOARD_USER)
-    pass_ok = bool(DASHBOARD_PASSWORD_HASH) and pwd_context.verify(credentials.password, DASHBOARD_PASSWORD_HASH)
+    pass_ok = bool(DASHBOARD_PASSWORD_HASH) and bcrypt.checkpw(
+        credentials.password.encode("utf-8"), DASHBOARD_PASSWORD_HASH.encode("utf-8")
+    )
     if not (user_ok and pass_ok):
         raise HTTPException(status_code=401, detail="Invalid credentials", headers={"WWW-Authenticate": "Basic"})
     return credentials.username
