@@ -1,5 +1,6 @@
 import json
 import os
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
@@ -19,9 +20,29 @@ from auth import (
 )
 from db import get_conn, get_secret_key, get_setting, set_setting
 
+GMT8 = timezone(timedelta(hours=8))
+
+
+def format_gmt8(value):
+    """Jinja filter: every timestamp in the database is stored in UTC (SQLite's
+    datetime('now') and Python's datetime.now(timezone.utc) both produce UTC,
+    just in slightly different string formats) -- this converts either format
+    to GMT+8 for display, without touching how anything is stored."""
+    if not value:
+        return value
+    try:
+        dt = datetime.fromisoformat(value)
+    except ValueError:
+        return value
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(GMT8).strftime("%Y-%m-%d %H:%M:%S")
+
+
 app = FastAPI()
 app.add_middleware(SessionMiddleware, secret_key=get_secret_key())
 templates = Jinja2Templates(directory="templates")
+templates.env.filters["gmt8"] = format_gmt8
 
 
 @app.exception_handler(AuthRedirect)

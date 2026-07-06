@@ -15,8 +15,8 @@
     <img src="/admin/unrecognized/{{ c.id }}/photo" class="w-full h-40 object-cover bg-slate-100">
     <div class="p-3">
       <p class="text-xs text-slate-500">{{ c.site_label or c.channel_name }}</p>
-      <p class="text-xs text-slate-400">First seen {{ c.first_seen }}</p>
-      <p class="text-xs text-slate-400">Seen {{ c.sightings_count }}x, last {{ c.last_seen }}</p>
+      <p class="text-xs text-slate-400">First seen {{ c.first_seen | gmt8 }}</p>
+      <p class="text-xs text-slate-400">Seen {{ c.sightings_count }}x, last {{ c.last_seen | gmt8 }}</p>
       <div class="flex items-center gap-3 mt-3">
         <a href="/admin/unrecognized/{{ c.id }}/enroll" class="text-xs font-medium text-slate-900 underline">Name this person</a>
         <form method="post" action="/admin/unrecognized/{{ c.id }}/dismiss" onsubmit="return confirm('Dismiss this face? The photo will be deleted.');">

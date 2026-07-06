@@ -114,6 +114,12 @@ localhost). Put it behind DSM's built-in reverse proxy with HTTPS
 (Let's Encrypt) and keep access to LAN/VPN only — this app holds biometric
 data and should never be reachable from the open internet.
 
+Everything is stored in UTC (the correct practice — avoids ambiguity), but
+every timestamp shown in the UI is converted to **GMT+8** for display
+(column headers say so explicitly). If you're ever inspecting the database
+directly (e.g. via a SQLite browser or `Admin -> Telegram`'s underlying
+data), remember the raw values there are UTC.
+
 ## Tuning
 
 All of the below are set via **Admin → Settings** in the dashboard, not env

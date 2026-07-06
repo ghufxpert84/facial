@@ -11,7 +11,7 @@
         <th class="text-left px-4 py-2">Name</th>
         <th class="text-left px-4 py-2">Employee ID</th>
         <th class="text-left px-4 py-2">Last known site</th>
-        <th class="text-left px-4 py-2">Last seen</th>
+        <th class="text-left px-4 py-2">Last seen (GMT+8)</th>
       </tr>
     </thead>
     <tbody class="divide-y divide-slate-100">
@@ -31,7 +31,7 @@
           {% elif w.channel_name %}<span class="inline-block px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-medium">{{ w.channel_name }}</span>
           {% else %}<span class="text-slate-400">no sightings yet</span>{% endif %}
         </td>
-        <td class="px-4 py-3 text-slate-500">{{ w.last_seen or "—" }}</td>
+        <td class="px-4 py-3 text-slate-500">{{ (w.last_seen | gmt8) if w.last_seen else "—" }}</td>
       </tr>
       {% else %}
       <tr><td colspan="5" class="px-4 py-6 text-center text-slate-400">No enrolled workers yet.</td></tr>
