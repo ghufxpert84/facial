@@ -27,6 +27,11 @@
       <label class="block text-sm font-medium text-slate-700 mb-1">Poll interval (seconds)</label>
       <input name="poll_interval_seconds" value="{{ settings.POLL_INTERVAL_SECONDS or '60' }}" type="number" min="10" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
     </div>
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">Unrecognized face review window (hours)</label>
+      <input name="unrecognized_retention_hours" value="{{ settings.UNRECOGNIZED_RETENTION_HOURS or '72' }}" type="number" min="1" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+      <p class="text-xs text-slate-400 mt-1">How long an unmatched face stays in Admin &rarr; Unrecognized Faces before being auto-purged if nobody names or dismisses it.</p>
+    </div>
     <button type="submit" class="bg-slate-900 text-white rounded-md px-4 py-2 text-sm font-medium hover:bg-slate-800">Save settings</button>
   </form>
 </div>

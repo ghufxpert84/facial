@@ -1,7 +1,8 @@
 import json
+import os
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -263,6 +264,7 @@ def admin_settings(request: Request, user: dict = Depends(require_admin), saved:
             "MATCH_THRESHOLD": get_setting(conn, "MATCH_THRESHOLD", "0.45"),
             "RETENTION_DAYS": get_setting(conn, "RETENTION_DAYS", "90"),
             "POLL_INTERVAL_SECONDS": get_setting(conn, "POLL_INTERVAL_SECONDS", "60"),
+            "UNRECOGNIZED_RETENTION_HOURS": get_setting(conn, "UNRECOGNIZED_RETENTION_HOURS", "72"),
         }
     finally:
         conn.close()
@@ -278,6 +280,7 @@ def admin_settings_save(
     match_threshold: str = Form("0.45"),
     retention_days: str = Form("90"),
     poll_interval_seconds: str = Form("60"),
+    unrecognized_retention_hours: str = Form("72"),
     user: dict = Depends(require_admin),
 ):
     conn = get_conn()
@@ -286,6 +289,7 @@ def admin_settings_save(
         set_setting(conn, "MATCH_THRESHOLD", match_threshold)
         set_setting(conn, "RETENTION_DAYS", retention_days)
         set_setting(conn, "POLL_INTERVAL_SECONDS", poll_interval_seconds)
+        set_setting(conn, "UNRECOGNIZED_RETENTION_HOURS", unrecognized_retention_hours)
     finally:
         conn.close()
     return RedirectResponse("/admin/settings?saved=true", status_code=303)
@@ -425,3 +429,129 @@ def admin_channels_site_label(
     finally:
         conn.close()
     return RedirectResponse("/admin/channels", status_code=303)
+
+
+# --- admin: unrecognized faces (review queue) ------------------------------------
+#
+# Faces that don't match an enrolled worker land here, not in a permanent
+# "unknown persons" table. An admin must explicitly name (enroll) or
+# dismiss each one; unreviewed entries auto-expire after
+# UNRECOGNIZED_RETENTION_HOURS (set in Admin -> Settings).
+
+
+@app.get("/admin/unrecognized")
+def admin_unrecognized(request: Request, user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT u.id, u.first_seen, u.last_seen, u.sightings_count, c.name, c.site_label
+            FROM unrecognized_faces u JOIN channels c ON c.id = u.channel_id
+            ORDER BY u.last_seen DESC
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    candidates = [
+        {
+            "id": r[0],
+            "first_seen": r[1],
+            "last_seen": r[2],
+            "sightings_count": r[3],
+            "channel_name": r[4],
+            "site_label": r[5],
+        }
+        for r in rows
+    ]
+    return templates.TemplateResponse(
+        "admin_unrecognized.html", {"request": request, "user": user, "candidates": candidates}
+    )
+
+
+@app.get("/admin/unrecognized/{candidate_id}/photo")
+def admin_unrecognized_photo(candidate_id: int, user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT crop_path FROM unrecognized_faces WHERE id = ?", (candidate_id,)).fetchone()
+    finally:
+        conn.close()
+    if row is None or not os.path.exists(row[0]):
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return FileResponse(row[0], media_type="image/jpeg")
+
+
+@app.get("/admin/unrecognized/{candidate_id}/enroll")
+def admin_unrecognized_enroll_form(candidate_id: int, request: Request, user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT id FROM unrecognized_faces WHERE id = ?", (candidate_id,)).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+    return templates.TemplateResponse(
+        "admin_unrecognized_enroll.html",
+        {"request": request, "user": user, "candidate_id": candidate_id, "error": None},
+    )
+
+
+@app.post("/admin/unrecognized/{candidate_id}/enroll")
+def admin_unrecognized_enroll_submit(
+    candidate_id: int,
+    request: Request,
+    name: str = Form(...),
+    employee_id: str = Form(...),
+    consent_date: str = Form(...),
+    notes: str = Form(""),
+    user: dict = Depends(require_admin),
+):
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT embedding, crop_path FROM unrecognized_faces WHERE id = ?", (candidate_id,)
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+        embedding, crop_path = row
+        try:
+            cur = conn.execute(
+                "INSERT INTO workers (name, employee_id, consent_signed_at, notes) VALUES (?, ?, ?, ?)",
+                (name, employee_id, consent_date, notes or None),
+            )
+        except Exception:
+            return templates.TemplateResponse(
+                "admin_unrecognized_enroll.html",
+                {
+                    "request": request,
+                    "user": user,
+                    "candidate_id": candidate_id,
+                    "error": f"Could not create worker — employee ID '{employee_id}' may already be in use.",
+                },
+            )
+        worker_id = cur.lastrowid
+        conn.execute(
+            "INSERT INTO worker_face_embeddings (worker_id, embedding, source_photo_ref) VALUES (?, ?, ?)",
+            (worker_id, embedding, crop_path),
+        )
+        conn.execute("DELETE FROM unrecognized_faces WHERE id = ?", (candidate_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse("/admin/unrecognized", status_code=303)
+
+
+@app.post("/admin/unrecognized/{candidate_id}/dismiss")
+def admin_unrecognized_dismiss(candidate_id: int, user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT crop_path FROM unrecognized_faces WHERE id = ?", (candidate_id,)).fetchone()
+        conn.execute("DELETE FROM unrecognized_faces WHERE id = ?", (candidate_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    if row is not None:
+        try:
+            os.remove(row[0])
+        except FileNotFoundError:
+            pass
+    return RedirectResponse("/admin/unrecognized", status_code=303)

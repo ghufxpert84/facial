@@ -75,6 +75,18 @@ CREATE TABLE IF NOT EXISTS app_settings (
     key TEXT PRIMARY KEY,
     value TEXT
 );
+
+CREATE TABLE IF NOT EXISTS unrecognized_faces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    embedding BLOB NOT NULL,
+    crop_path TEXT NOT NULL,
+    channel_id INTEGER NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+    raw_message_id INTEGER NOT NULL REFERENCES raw_messages(id) ON DELETE CASCADE,
+    first_seen TEXT NOT NULL,
+    last_seen TEXT NOT NULL,
+    sightings_count INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_unrecognized_faces_last_seen ON unrecognized_faces (last_seen);
 """
 
 

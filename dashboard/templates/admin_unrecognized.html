@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Unrecognized Faces{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-2">Unrecognized Faces</h1>
+<p class="text-sm text-slate-500 mb-6">
+  Faces detected in watched channels that didn't match an enrolled worker.
+  Nothing here is a permanent record — name a face to enroll it as a
+  consenting worker, or dismiss it (e.g. a bystander). Unreviewed entries
+  auto-expire per the window set in Admin &rarr; Settings.
+</p>
+
+<div class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4">
+  {% for c in candidates %}
+  <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+    <img src="/admin/unrecognized/{{ c.id }}/photo" class="w-full h-40 object-cover bg-slate-100">
+    <div class="p-3">
+      <p class="text-xs text-slate-500">{{ c.site_label or c.channel_name }}</p>
+      <p class="text-xs text-slate-400">First seen {{ c.first_seen }}</p>
+      <p class="text-xs text-slate-400">Seen {{ c.sightings_count }}x, last {{ c.last_seen }}</p>
+      <div class="flex items-center gap-3 mt-3">
+        <a href="/admin/unrecognized/{{ c.id }}/enroll" class="text-xs font-medium text-slate-900 underline">Name this person</a>
+        <form method="post" action="/admin/unrecognized/{{ c.id }}/dismiss" onsubmit="return confirm('Dismiss this face? The photo will be deleted.');">
+          <button type="submit" class="text-xs text-red-600 underline">Dismiss</button>
+        </form>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <p class="text-slate-400 col-span-full text-center py-8">No unrecognized faces pending review.</p>
+  {% endfor %}
+</div>
+{% endblock %}

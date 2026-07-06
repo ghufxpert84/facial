@@ -1,9 +1,10 @@
 """Main face-worker loop: consumes raw_messages queued by telegram-listener,
 runs face recognition + field-report extraction, and purges expired data.
 
-MATCH_THRESHOLD/RETENTION_DAYS/POLL_INTERVAL_SECONDS are read from the
-app_settings table (set via the dashboard's Admin -> Settings page) fresh
-on every loop iteration, so changes there apply without a redeploy.
+MATCH_THRESHOLD/RETENTION_DAYS/POLL_INTERVAL_SECONDS/
+UNRECOGNIZED_RETENTION_HOURS are read from the app_settings table (set via
+the dashboard's Admin -> Settings page) fresh on every loop iteration, so
+changes there apply without a redeploy.
 """
 import os
 import json
@@ -11,6 +12,7 @@ import time
 import logging
 from datetime import datetime, timedelta, timezone
 
+import candidates
 from db import get_conn, get_setting
 from recognize import match_faces
 from report_extractor import extract_field_report
@@ -30,7 +32,8 @@ def process_message(conn, msg_id, channel_id, timestamp, caption, photo_path, ma
     sighting_by_worker = {}
 
     if photo_path and os.path.exists(photo_path):
-        for worker_id, confidence in match_faces(conn, photo_path, match_threshold):
+        matches, unmatched = match_faces(conn, photo_path, match_threshold)
+        for worker_id, confidence in matches:
             cur = conn.execute(
                 """
                 INSERT INTO sightings (worker_id, channel_id, raw_message_id, timestamp, confidence, photo_path)
@@ -39,6 +42,7 @@ def process_message(conn, msg_id, channel_id, timestamp, caption, photo_path, ma
                 (worker_id, channel_id, msg_id, timestamp, confidence, photo_path),
             )
             sighting_by_worker[worker_id] = cur.lastrowid
+        candidates.stage_unmatched_faces(conn, unmatched, photo_path, channel_id, msg_id, match_threshold)
 
     parsed = extract_field_report(caption)
     if parsed is not None:
@@ -80,10 +84,12 @@ def main():
         match_threshold = float(get_setting(conn, "MATCH_THRESHOLD", "0.45"))
         retention_days = int(get_setting(conn, "RETENTION_DAYS", "90"))
         poll_interval = int(get_setting(conn, "POLL_INTERVAL_SECONDS", "60"))
+        unrecognized_retention_hours = int(get_setting(conn, "UNRECOGNIZED_RETENTION_HOURS", "72"))
         try:
             for row in fetch_unprocessed(conn):
                 process_message(conn, *row, match_threshold)
             purge_expired(conn, retention_days)
+            candidates.purge_expired_candidates(conn, unrecognized_retention_hours)
         except Exception:
             log.exception("error in worker loop, will retry next interval")
             conn.rollback()
