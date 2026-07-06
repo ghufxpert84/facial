@@ -16,7 +16,7 @@ services:
       retries: 10
 
   telegram-listener:
-    build: ./telegram-listener
+    image: ghcr.io/ghufxpert84/facial-telegram-listener:latest
     restart: unless-stopped
     env_file: .env
     environment:
@@ -28,7 +28,7 @@ services:
         condition: service_healthy
 
   face-worker:
-    build: ./face-worker
+    image: ghcr.io/ghufxpert84/facial-face-worker:latest
     restart: unless-stopped
     env_file: .env
     environment:
@@ -41,7 +41,7 @@ services:
         condition: service_healthy
 
   dashboard:
-    build: ./dashboard
+    image: ghcr.io/ghufxpert84/facial-dashboard:latest
     restart: unless-stopped
     env_file: .env
     environment:
