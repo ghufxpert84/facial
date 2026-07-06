@@ -1,4 +1,5 @@
 import bcrypt
+from fastapi import Request
 
 from db import get_conn
 
@@ -14,11 +15,11 @@ def verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
-def login_user(request, user_id: int):
+def login_user(request: Request, user_id: int):
     request.session["user_id"] = user_id
 
 
-def logout_user(request):
+def logout_user(request: Request):
     request.session.clear()
 
 
@@ -31,7 +32,7 @@ class AuthRedirect(Exception):
         self.location = location
 
 
-def get_current_user(request):
+def get_current_user(request: Request):
     user_id = request.session.get("user_id")
     if user_id is None:
         return None
@@ -45,14 +46,14 @@ def get_current_user(request):
     return {"id": row[0], "username": row[1], "role": row[2]}
 
 
-def require_login(request):
+def require_login(request: Request):
     user = get_current_user(request)
     if user is None:
         raise AuthRedirect("/login")
     return user
 
 
-def require_admin(request):
+def require_admin(request: Request):
     user = require_login(request)
     if user["role"] != "admin":
         raise AuthRedirect("/")
