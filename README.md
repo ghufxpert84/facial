@@ -102,6 +102,11 @@ vars or a redeploy:
 - **Match threshold** (default 0.45) — cosine similarity cutoff for a face to
   count as a match. Raise it if you see false positives, lower it if real
   workers aren't being matched. Tune against real photos before relying on it.
+- **History pull limit (hours)** (default 24) — when a channel is watched
+  for the first time, only messages from this far back are pulled, not the
+  channel's entire history. Only affects a channel's very first poll;
+  ongoing polling always catches every new message going forward regardless
+  of this setting.
 - **Retention (days)** (default 90) — how long sighting/photo records are
   kept before automatic purge.
 - **Unrecognized face review window (hours)** (default 72) — how long an

@@ -9,6 +9,7 @@ service waits patiently rather than crashing.
 """
 import time
 import logging
+from datetime import datetime, timedelta, timezone
 
 from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
@@ -26,8 +27,9 @@ def load_config(conn):
     session_string = get_setting(conn, "TG_SESSION_STRING", decrypt=True)
     channels_raw = get_setting(conn, "TG_CHANNELS", "")
     poll_interval = int(get_setting(conn, "POLL_INTERVAL_SECONDS", "60"))
+    history_pull_hours = int(get_setting(conn, "HISTORY_PULL_HOURS", "24"))
     channel_idents = [c.strip() for c in channels_raw.split(",") if c.strip()]
-    return api_id, api_hash, session_string, channel_idents, poll_interval
+    return api_id, api_hash, session_string, channel_idents, poll_interval, history_pull_hours
 
 
 def ensure_channel_rows(conn, client, channel_idents):
@@ -53,15 +55,28 @@ def ensure_channel_rows(conn, client, channel_idents):
     return rows
 
 
-def poll_once(conn, client, channels):
+def poll_once(conn, client, channels, history_pull_hours):
     """Processes messages oldest-first per channel, committing after each
     one. This matters for large backlogs: if a single photo download times
     out partway through (Telegram's file servers can choke on a burst of
     many requests in a row, e.g. catching up on hours of history at once),
     only that message is retried next cycle -- everything processed before
-    it stays committed instead of being rolled back with it."""
+    it stays committed instead of being rolled back with it.
+
+    A channel's very first poll (last_message_id still 0) only reaches back
+    HISTORY_PULL_HOURS instead of pulling the entire channel history --
+    both to avoid exactly that kind of download burst on a newly-added
+    channel, and because old history from before the system was connected
+    isn't useful for tracking current worker location anyway.
+    """
     for tg_id, info in channels.items():
-        for message in client.iter_messages(info["entity"], min_id=info["last_message_id"], reverse=True):
+        if info["last_message_id"] == 0:
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=history_pull_hours)
+            message_iter = client.iter_messages(info["entity"], offset_date=cutoff, reverse=True)
+        else:
+            message_iter = client.iter_messages(info["entity"], min_id=info["last_message_id"], reverse=True)
+
+        for message in message_iter:
             photo_path = None
             if message.photo:
                 photo_path = f"/data/incoming/{info['db_id']}_{message.id}.jpg"
@@ -97,7 +112,7 @@ def main():
     active_session_string = None
 
     while True:
-        api_id, api_hash, session_string, channel_idents, poll_interval = load_config(conn)
+        api_id, api_hash, session_string, channel_idents, poll_interval, history_pull_hours = load_config(conn)
 
         if not (api_id and api_hash and session_string and channel_idents):
             if client is not None:
@@ -119,7 +134,7 @@ def main():
         try:
             channels = ensure_channel_rows(conn, client, channel_idents)
             log.info("Watching channels: %s", [c["name"] for c in channels.values()])
-            poll_once(conn, client, channels)
+            poll_once(conn, client, channels, history_pull_hours)
         except FloodWaitError as e:
             log.warning("Flood wait, sleeping %ss", e.seconds)
             time.sleep(e.seconds)

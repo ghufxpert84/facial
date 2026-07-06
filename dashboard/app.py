@@ -265,6 +265,7 @@ def admin_settings(request: Request, user: dict = Depends(require_admin), saved:
             "RETENTION_DAYS": get_setting(conn, "RETENTION_DAYS", "90"),
             "POLL_INTERVAL_SECONDS": get_setting(conn, "POLL_INTERVAL_SECONDS", "60"),
             "UNRECOGNIZED_RETENTION_HOURS": get_setting(conn, "UNRECOGNIZED_RETENTION_HOURS", "72"),
+            "HISTORY_PULL_HOURS": get_setting(conn, "HISTORY_PULL_HOURS", "24"),
         }
     finally:
         conn.close()
@@ -281,6 +282,7 @@ def admin_settings_save(
     retention_days: str = Form("90"),
     poll_interval_seconds: str = Form("60"),
     unrecognized_retention_hours: str = Form("72"),
+    history_pull_hours: str = Form("24"),
     user: dict = Depends(require_admin),
 ):
     conn = get_conn()
@@ -290,6 +292,7 @@ def admin_settings_save(
         set_setting(conn, "RETENTION_DAYS", retention_days)
         set_setting(conn, "POLL_INTERVAL_SECONDS", poll_interval_seconds)
         set_setting(conn, "UNRECOGNIZED_RETENTION_HOURS", unrecognized_retention_hours)
+        set_setting(conn, "HISTORY_PULL_HOURS", history_pull_hours)
     finally:
         conn.close()
     return RedirectResponse("/admin/settings?saved=true", status_code=303)
