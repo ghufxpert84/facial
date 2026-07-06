@@ -12,7 +12,7 @@ jobs:
       packages: write
     strategy:
       matrix:
-        service: [telegram-listener, face-worker, dashboard, db]
+        service: [telegram-listener, face-worker, dashboard]
     steps:
       - uses: actions/checkout@v4
 

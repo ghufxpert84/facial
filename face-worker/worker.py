@@ -19,12 +19,10 @@ RETENTION_DAYS = int(os.environ.get("RETENTION_DAYS", "90"))
 
 
 def fetch_unprocessed(conn):
-    with conn.cursor() as cur:
-        cur.execute(
-            "SELECT id, channel_id, timestamp, caption, photo_path FROM raw_messages "
-            "WHERE processed_at IS NULL ORDER BY id"
-        )
-        return cur.fetchall()
+    return conn.execute(
+        "SELECT id, channel_id, timestamp, caption, photo_path FROM raw_messages "
+        "WHERE processed_at IS NULL ORDER BY id"
+    ).fetchall()
 
 
 def process_message(conn, msg_id, channel_id, timestamp, caption, photo_path):
@@ -32,41 +30,40 @@ def process_message(conn, msg_id, channel_id, timestamp, caption, photo_path):
 
     if photo_path and os.path.exists(photo_path):
         for worker_id, confidence in match_faces(conn, photo_path, MATCH_THRESHOLD):
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO sightings (worker_id, channel_id, raw_message_id, timestamp, confidence, photo_path)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    RETURNING id
-                    """,
-                    (worker_id, channel_id, msg_id, timestamp, confidence, photo_path),
-                )
-                sighting_by_worker[worker_id] = cur.fetchone()[0]
+            cur = conn.execute(
+                """
+                INSERT INTO sightings (worker_id, channel_id, raw_message_id, timestamp, confidence, photo_path)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (worker_id, channel_id, msg_id, timestamp, confidence, photo_path),
+            )
+            sighting_by_worker[worker_id] = cur.lastrowid
 
     parsed = extract_field_report(caption)
     if parsed is not None:
         worker_id = next(iter(sighting_by_worker), None)
         sighting_id = sighting_by_worker.get(worker_id)
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                INSERT INTO field_reports (worker_id, sighting_id, channel_id, raw_message_id, timestamp, raw_text, parsed_fields)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                """,
-                (worker_id, sighting_id, channel_id, msg_id, timestamp, caption, json.dumps(parsed)),
-            )
+        conn.execute(
+            """
+            INSERT INTO field_reports (worker_id, sighting_id, channel_id, raw_message_id, timestamp, raw_text, parsed_fields)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (worker_id, sighting_id, channel_id, msg_id, timestamp, caption, json.dumps(parsed)),
+        )
 
-    with conn.cursor() as cur:
-        cur.execute("UPDATE raw_messages SET processed_at = now() WHERE id = %s", (msg_id,))
+    conn.execute("UPDATE raw_messages SET processed_at = ? WHERE id = ?", (datetime.now(timezone.utc).isoformat(), msg_id))
     conn.commit()
 
 
 def purge_expired(conn):
-    cutoff = datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)
-    with conn.cursor() as cur:
-        cur.execute("SELECT photo_path FROM raw_messages WHERE timestamp < %s AND photo_path IS NOT NULL", (cutoff,))
-        paths = [r[0] for r in cur.fetchall()]
-        cur.execute("DELETE FROM raw_messages WHERE timestamp < %s", (cutoff,))
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)).isoformat()
+    paths = [
+        row[0]
+        for row in conn.execute(
+            "SELECT photo_path FROM raw_messages WHERE timestamp < ? AND photo_path IS NOT NULL", (cutoff,)
+        )
+    ]
+    conn.execute("DELETE FROM raw_messages WHERE timestamp < ?", (cutoff,))
     conn.commit()
     for path in paths:
         try:

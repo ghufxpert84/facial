@@ -14,6 +14,8 @@ biometric data.
 import argparse
 import sys
 
+import numpy as np
+
 from db import get_conn
 from face_model import get_faces
 
@@ -28,32 +30,28 @@ def main():
     args = parser.parse_args()
 
     conn = get_conn()
-    with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO workers (name, employee_id, consent_signed_at, notes)
-            VALUES (%s, %s, %s, %s)
-            ON CONFLICT (employee_id) DO UPDATE SET name = EXCLUDED.name, notes = EXCLUDED.notes
-            RETURNING id
-            """,
-            (args.name, args.employee_id, args.consent_date, args.notes),
-        )
-        worker_id = cur.fetchone()[0]
+    conn.execute(
+        """
+        INSERT INTO workers (name, employee_id, consent_signed_at, notes)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(employee_id) DO UPDATE SET name = excluded.name, notes = excluded.notes
+        """,
+        (args.name, args.employee_id, args.consent_date, args.notes),
+    )
+    worker_id = conn.execute("SELECT id FROM workers WHERE employee_id = ?", (args.employee_id,)).fetchone()[0]
 
-        enrolled = 0
-        for photo_path in args.photos:
-            faces = get_faces(photo_path)
-            if len(faces) != 1:
-                print(f"SKIP {photo_path}: expected exactly 1 face, found {len(faces)}", file=sys.stderr)
-                continue
-            cur.execute(
-                """
-                INSERT INTO worker_face_embeddings (worker_id, embedding, source_photo_ref)
-                VALUES (%s, %s, %s)
-                """,
-                (worker_id, faces[0].normed_embedding.tolist(), photo_path),
-            )
-            enrolled += 1
+    enrolled = 0
+    for photo_path in args.photos:
+        faces = get_faces(photo_path)
+        if len(faces) != 1:
+            print(f"SKIP {photo_path}: expected exactly 1 face, found {len(faces)}", file=sys.stderr)
+            continue
+        embedding = np.asarray(faces[0].normed_embedding, dtype=np.float32).tobytes()
+        conn.execute(
+            "INSERT INTO worker_face_embeddings (worker_id, embedding, source_photo_ref) VALUES (?, ?, ?)",
+            (worker_id, embedding, photo_path),
+        )
+        enrolled += 1
 
     conn.commit()
     print(f"Enrolled worker_id={worker_id} ({args.name}) with {enrolled}/{len(args.photos)} reference photos")

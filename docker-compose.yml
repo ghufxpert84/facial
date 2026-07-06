@@ -1,19 +1,4 @@
 services:
-  db:
-    image: ghcr.io/ghufxpert84/facial-db:latest
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    volumes:
-      - ${DATA_DIR:-./data}/db:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
   telegram-listener:
     image: ghcr.io/ghufxpert84/facial-telegram-listener:latest
     restart: unless-stopped
@@ -22,40 +7,30 @@ services:
       TG_API_HASH: ${TG_API_HASH}
       TG_SESSION_STRING: ${TG_SESSION_STRING}
       TG_CHANNELS: ${TG_CHANNELS}
-      DATABASE_URL: ${DATABASE_URL}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS}
     volumes:
+      - ${DATA_DIR:-./data}/db:/data/db
       - ${DATA_DIR:-./data}/incoming:/data/incoming
-    depends_on:
-      db:
-        condition: service_healthy
 
   face-worker:
     image: ghcr.io/ghufxpert84/facial-face-worker:latest
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATABASE_URL}
       POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS}
       MATCH_THRESHOLD: ${MATCH_THRESHOLD}
       RETENTION_DAYS: ${RETENTION_DAYS}
     volumes:
+      - ${DATA_DIR:-./data}/db:/data/db
       - ${DATA_DIR:-./data}/incoming:/data/incoming
       - ${DATA_DIR:-./data}/enrolled:/data/enrolled
-    depends_on:
-      db:
-        condition: service_healthy
 
   dashboard:
     image: ghcr.io/ghufxpert84/facial-dashboard:latest
     restart: unless-stopped
     environment:
-      DATABASE_URL: ${DATABASE_URL}
       DASHBOARD_USER: ${DASHBOARD_USER}
       DASHBOARD_PASSWORD_HASH: ${DASHBOARD_PASSWORD_HASH}
     volumes:
-      - ${DATA_DIR:-./data}/incoming:/data/incoming:ro
+      - ${DATA_DIR:-./data}/db:/data/db
     ports:
       - "127.0.0.1:8080:8080"
-    depends_on:
-      db:
-        condition: service_healthy
