@@ -30,5 +30,6 @@ services:
     restart: unless-stopped
     volumes:
       - /volume1/docker/telegram-worker-tracker-data/db:/data/db
+      - /volume1/docker/telegram-worker-tracker-data/incoming:/data/incoming:ro
     ports:
       - "127.0.0.1:8080:8080"
