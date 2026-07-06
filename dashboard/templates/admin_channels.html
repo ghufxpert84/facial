@@ -26,6 +26,11 @@
         <td class="px-4 py-2 text-slate-500">
           {% if c.last_polled_at %}{{ c.last_polled_at }}{% else %}<span class="text-amber-600">not scanned yet</span>{% endif %}
         </td>
+        <td class="px-4 py-2 text-right">
+          <form method="post" action="/admin/channels/{{ c.id }}/skip-to-latest" onsubmit="return confirm('Skip the rest of the backlog for this channel and jump straight to the newest message? Any remaining unprocessed history will be permanently skipped.');">
+            <button type="submit" class="text-xs text-slate-500 hover:text-slate-900 underline">skip backlog &rarr; jump to latest</button>
+          </form>
+        </td>
       </tr>
       {% else %}
       <tr><td colspan="4" class="px-4 py-6 text-center text-slate-400">No channels yet — they appear here once the listener processes its first message.</td></tr>

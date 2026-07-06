@@ -48,10 +48,16 @@ def ensure_channel_rows(conn, client, channel_idents):
             """,
             (tg_id, name),
         )
-        db_id, last_message_id = conn.execute(
-            "SELECT id, last_message_id FROM channels WHERE telegram_channel_id = ?", (tg_id,)
+        db_id, last_message_id, skip_to_latest = conn.execute(
+            "SELECT id, last_message_id, skip_to_latest FROM channels WHERE telegram_channel_id = ?", (tg_id,)
         ).fetchone()
-        rows[tg_id] = {"entity": entity, "db_id": db_id, "last_message_id": last_message_id, "name": name}
+        rows[tg_id] = {
+            "entity": entity,
+            "db_id": db_id,
+            "last_message_id": last_message_id,
+            "name": name,
+            "skip_to_latest": bool(skip_to_latest),
+        }
     conn.commit()
     return rows
 
@@ -71,6 +77,24 @@ def poll_once(conn, client, channels, history_pull_hours):
     isn't useful for tracking current worker location anyway.
     """
     for tg_id, info in channels.items():
+        if info["skip_to_latest"]:
+            latest = client.get_messages(info["entity"], limit=1)
+            new_last_id = latest[0].id if latest else info["last_message_id"]
+            conn.execute(
+                "UPDATE channels SET last_message_id = ?, skip_to_latest = 0, last_polled_at = ? WHERE id = ?",
+                (new_last_id, datetime.now(timezone.utc).isoformat(), info["db_id"]),
+            )
+            conn.commit()
+            info["last_message_id"] = new_last_id
+            log.info("Skipped remaining backlog for %s, resuming from message %s", info["name"], new_last_id)
+            log_event(
+                conn,
+                SERVICE_NAME,
+                "info",
+                f"Skipped remaining backlog for {info['name']} at admin's request, resuming from message {new_last_id}",
+            )
+            continue  # nothing to process this cycle -- we just fast-forwarded past it, last_polled_at already set above
+
         if info["last_message_id"] == 0:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=history_pull_hours)
             message_iter = client.iter_messages(info["entity"], offset_date=cutoff, reverse=True)

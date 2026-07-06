@@ -63,7 +63,12 @@ For Portainer-based deployment (Web editor / Stacks), use
    message, give it a human-readable site label here. Also shows a **last
    scanned** timestamp per channel, updated every poll cycle regardless of
    whether new messages were found — a quick way to confirm the listener is
-   actually alive and scanning, not just idle/stuck.
+   actually alive and scanning, not just idle/stuck. A **"skip backlog →
+   jump to latest"** button lets you fast-forward a channel past its
+   remaining unprocessed history straight to the newest message — useful if
+   a channel started catching up on a long backlog before you'd set the
+   history pull limit, or you simply don't want to wait for old history to
+   finish processing.
 6. **Admin → Logs**: notable events from `telegram-listener` and
    `face-worker` (connection changes, download failures, errors) — no need
    to open Portainer's container logs for routine troubleshooting.

@@ -445,6 +445,17 @@ def admin_channels(request: Request, user: dict = Depends(require_admin)):
     return templates.TemplateResponse("admin_channels.html", {"request": request, "user": user, "channels": channels})
 
 
+@app.post("/admin/channels/{channel_id}/skip-to-latest")
+def admin_channels_skip_to_latest(channel_id: int, user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE channels SET skip_to_latest = 1 WHERE id = ?", (channel_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse("/admin/channels", status_code=303)
+
+
 @app.post("/admin/channels/{channel_id}/site-label")
 def admin_channels_site_label(
     channel_id: int, request: Request, site_label: str = Form(""), user: dict = Depends(require_admin)
