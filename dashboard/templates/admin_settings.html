@@ -8,12 +8,11 @@
 {% endif %}
 
 <div class="max-w-lg bg-white border border-slate-200 rounded-xl shadow-sm p-6">
+  <p class="text-xs text-slate-400 mb-4">
+    Which channels to watch is now managed on <a href="/admin/channels" class="underline">Admin &rarr; Channels</a>
+    (with per-channel enable/disable and reset-scan controls), not here.
+  </p>
   <form method="post" action="/admin/settings" class="space-y-5">
-    <div>
-      <label class="block text-sm font-medium text-slate-700 mb-1">Telegram channels to watch</label>
-      <input name="tg_channels" value="{{ settings.TG_CHANNELS or '' }}" placeholder="fieldreports,-1001234567890" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
-      <p class="text-xs text-slate-400 mt-1">Comma-separated usernames or numeric channel ids.</p>
-    </div>
     <div>
       <label class="block text-sm font-medium text-slate-700 mb-1">Match threshold</label>
       <input name="match_threshold" value="{{ settings.MATCH_THRESHOLD or '0.45' }}" type="number" step="0.01" min="0" max="1" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">

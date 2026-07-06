@@ -1,11 +1,14 @@
 """Polls subscribed Telegram channels for new photo/video/text messages and
 queues them in SQLite for the face-worker service to process.
 
-Unlike earlier versions, Telegram API credentials, the session string, and
-the channel watchlist all live in the app_settings table (set via the
-dashboard's Admin -> Telegram / Admin -> Settings pages), not environment
-variables. Until an admin connects Telegram through the web UI, this
-service waits patiently rather than crashing.
+Telegram API credentials and the session string live in app_settings (set
+via the dashboard's Admin -> Telegram page). Which channels to watch lives
+in the channel_watchlist table instead (managed from Admin -> Channels,
+not a comma-separated setting) -- each entry can be enabled/disabled
+independently, and a channel can be told to reset its scan back to the
+History Pull Limit window via the reset_scan flag. Until an admin connects
+Telegram through the web UI, this service waits patiently rather than
+crashing.
 """
 import time
 import logging
@@ -26,16 +29,20 @@ def load_config(conn):
     api_id = get_setting(conn, "TG_API_ID")
     api_hash = get_setting(conn, "TG_API_HASH", decrypt=True)
     session_string = get_setting(conn, "TG_SESSION_STRING", decrypt=True)
-    channels_raw = get_setting(conn, "TG_CHANNELS", "")
     poll_interval = int(get_setting(conn, "POLL_INTERVAL_SECONDS", "60"))
     history_pull_hours = int(get_setting(conn, "HISTORY_PULL_HOURS", "24"))
-    channel_idents = [c.strip() for c in channels_raw.split(",") if c.strip()]
+    channel_idents = [
+        row[0] for row in conn.execute("SELECT identifier FROM channel_watchlist WHERE enabled = 1").fetchall()
+    ]
     return api_id, api_hash, session_string, channel_idents, poll_interval, history_pull_hours
 
 
 def ensure_channel_rows(conn, client, channel_idents):
-    """Upsert each configured channel into the channels table, return
-    {telegram_id: (db_id, last_message_id)}."""
+    """Upsert each enabled watchlist identifier into the channels table,
+    return {telegram_id: {...}}. If a channel has reset_scan set (from
+    Admin -> Channels), resets last_message_id back to 0 so the next
+    poll_once call re-scans from the History Pull Limit window again,
+    exactly like a newly-added channel."""
     rows = {}
     for ident in channel_idents:
         entity = client.get_entity(ident)
@@ -43,14 +50,28 @@ def ensure_channel_rows(conn, client, channel_idents):
         name = getattr(entity, "title", None) or getattr(entity, "username", str(tg_id))
         conn.execute(
             """
-            INSERT INTO channels (telegram_channel_id, name) VALUES (?, ?)
-            ON CONFLICT(telegram_channel_id) DO UPDATE SET name = excluded.name
+            INSERT INTO channels (telegram_channel_id, name, identifier) VALUES (?, ?, ?)
+            ON CONFLICT(telegram_channel_id) DO UPDATE SET name = excluded.name, identifier = excluded.identifier
             """,
-            (tg_id, name),
+            (tg_id, name, ident),
         )
-        db_id, last_message_id, skip_to_latest = conn.execute(
-            "SELECT id, last_message_id, skip_to_latest FROM channels WHERE telegram_channel_id = ?", (tg_id,)
+        db_id, last_message_id, skip_to_latest, reset_scan = conn.execute(
+            "SELECT id, last_message_id, skip_to_latest, reset_scan FROM channels WHERE telegram_channel_id = ?",
+            (tg_id,),
         ).fetchone()
+
+        if reset_scan:
+            conn.execute("UPDATE channels SET last_message_id = 0, reset_scan = 0 WHERE id = ?", (db_id,))
+            conn.commit()
+            last_message_id = 0
+            log.info("Reset scan for %s back to the History Pull Limit window at admin's request", name)
+            log_event(
+                conn,
+                SERVICE_NAME,
+                "info",
+                f"Reset scan for {name} back to the History Pull Limit window at admin's request",
+            )
+
         rows[tg_id] = {
             "entity": entity,
             "db_id": db_id,

@@ -63,12 +63,24 @@ For Portainer-based deployment (Web editor / Stacks), use
 2. Log in, then go to **Admin → Telegram**: enter your API ID/hash and phone
    number, then the login code Telegram sends you (and your 2FA password if
    you have one set). No Portainer Console, no temp containers.
-3. **Admin → Settings**: set which channels to watch (comma-separated
-   usernames/ids), match threshold, retention window, poll interval.
+3. **Admin → Settings**: match threshold, retention window, poll interval,
+   history pull limit. (Which channels to watch now lives on Admin →
+   Channels, not here.)
 4. **Admin → Users**: add `viewer` accounts for anyone who should see the
    dashboard without managing settings.
-5. **Admin → Channels**: once the listener has processed a channel's first
-   message, give it a human-readable site label here. Also shows:
+5. **Admin → Channels**: this is where you actually add channels and manage
+   them:
+   - **Add channels to watch** — a textarea, one username or numeric channel
+     id per line.
+   - **Enable/disable** toggle per channel — pauses scanning without losing
+     its history, site label, or any collected data. A disabled channel
+     just sits idle until re-enabled.
+   - **Reset scan** — restarts a channel's scan from the History Pull Limit
+     window again (i.e. treats it like newly-added: re-pulls the last N
+     hours). Different from **skip to latest**, which instead jumps forward
+     past any remaining backlog straight to the newest message. Use reset
+     scan if you suspect recent photos were missed; use skip to latest if
+     you just want to stop waiting on old history.
    - A **scan progress bar** (`telegram-listener`'s message-ID counter vs.
      the channel's current newest message) — tells you how far through the
      backlog it's gotten, not just whether it's "stuck."
@@ -79,11 +91,11 @@ For Portainer-based deployment (Web editor / Stacks), use
      isn't moving.
    - A **last scanned** timestamp per channel, updated every poll cycle
      regardless of whether new messages were found.
-   - A **"skip backlog → jump to latest"** button to fast-forward a channel
-     past its remaining unprocessed history straight to the newest message —
-     useful if a channel started catching up on a long backlog before you'd
-     set the history pull limit, or you simply don't want to wait for old
-     history to finish processing.
+   - Once a channel is resolved (telegram-listener has seen it at least
+     once), you can give it a human-readable **site label**.
+   - **Remove** deletes it from the watchlist (stops scanning) but keeps all
+     historical sightings/worker data intact — re-add the same identifier
+     later to resume.
 6. **Admin → Logs**: notable events from `telegram-listener` and
    `face-worker` (connection changes, download failures, errors) — no need
    to open Portainer's container logs for routine troubleshooting.

@@ -106,6 +106,13 @@ CREATE TABLE IF NOT EXISTS logs (
     created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs (created_at DESC);
+
+CREATE TABLE IF NOT EXISTS channel_watchlist (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    identifier TEXT UNIQUE NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    added_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 """
 
 
@@ -144,7 +151,47 @@ def get_conn():
         conn.commit()
     except sqlite3.OperationalError:
         pass
+    try:
+        conn.execute("ALTER TABLE channels ADD COLUMN identifier TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE channels ADD COLUMN reset_scan INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    _migrate_tg_channels_setting_to_watchlist(conn)
     return conn
+
+
+def _migrate_tg_channels_setting_to_watchlist(conn):
+    """One-time migration: the old comma-separated TG_CHANNELS setting is
+    replaced by the channel_watchlist table (managed from Admin -> Channels
+    instead of Admin -> Settings). Seeds the watchlist from whatever was
+    already configured, so upgrading doesn't silently stop watching
+    channels. Guarded by a persistent flag (not "is the table empty"),
+    since an admin intentionally clearing the watchlist later shouldn't
+    cause it to be silently re-seeded from stale data."""
+    already_migrated = conn.execute(
+        "SELECT 1 FROM app_settings WHERE key = 'CHANNEL_WATCHLIST_MIGRATED'"
+    ).fetchone()
+    if already_migrated:
+        return
+    old_value = conn.execute("SELECT value FROM app_settings WHERE key = 'TG_CHANNELS'").fetchone()
+    if old_value and old_value[0]:
+        for ident in old_value[0].split(","):
+            ident = ident.strip()
+            if ident:
+                conn.execute(
+                    "INSERT INTO channel_watchlist (identifier) VALUES (?) ON CONFLICT(identifier) DO NOTHING",
+                    (ident,),
+                )
+    conn.execute(
+        "INSERT INTO app_settings (key, value) VALUES ('CHANNEL_WATCHLIST_MIGRATED', '1') "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value"
+    )
+    conn.commit()
 
 
 def get_secret_key():

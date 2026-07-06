@@ -9,13 +9,26 @@
   face-worker queue — photos/video frames already downloaded but not yet
   matched against workers. A stuck bar or growing pending count usually
   means the corresponding service has hit a snag — check Admin &rarr; Logs.
+  <strong>Reset scan</strong> restarts a channel's scan from the History
+  Pull Limit window again (Admin &rarr; Settings) — different from
+  <strong>skip to latest</strong>, which jumps forward past remaining
+  backlog instead.
 </p>
+
+<div class="max-w-lg bg-white border border-slate-200 rounded-xl shadow-sm p-6 mb-8">
+  <h2 class="text-sm font-semibold mb-3">Add channels to watch</h2>
+  <form method="post" action="/admin/channels/add" class="space-y-3">
+    <textarea name="identifiers" rows="4" placeholder="one channel username or numeric id per line, e.g.&#10;fieldreports&#10;-1001234567890" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm font-mono"></textarea>
+    <button type="submit" class="bg-slate-900 text-white rounded-md px-4 py-2 text-sm font-medium hover:bg-slate-800">Add</button>
+  </form>
+</div>
 
 <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
   <table class="w-full text-sm">
     <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
       <tr>
-        <th class="text-left px-4 py-2">Channel name</th>
+        <th class="text-left px-4 py-2">Enabled</th>
+        <th class="text-left px-4 py-2">Channel</th>
         <th class="text-left px-4 py-2">Site label</th>
         <th class="text-left px-4 py-2">Scan progress</th>
         <th class="text-left px-4 py-2">Pending face-match</th>
@@ -26,12 +39,26 @@
     <tbody class="divide-y divide-slate-100">
       {% for c in channels %}
       <tr>
-        <td class="px-4 py-2">{{ c.name }}</td>
         <td class="px-4 py-2">
-          <form method="post" action="/admin/channels/{{ c.id }}/site-label" class="flex items-center gap-2">
-            <input name="site_label" value="{{ c.site_label or '' }}" placeholder="e.g. Project Site A" class="rounded border border-slate-300 text-sm px-2 py-1 w-56">
+          <form method="post" action="/admin/channels/watchlist/{{ c.watchlist_id }}/toggle">
+            <button type="submit" class="text-xs px-2 py-1 rounded-full font-medium {{ 'bg-green-50 text-green-700' if c.enabled else 'bg-slate-100 text-slate-500' }}">
+              {{ 'enabled' if c.enabled else 'disabled' }}
+            </button>
+          </form>
+        </td>
+        <td class="px-4 py-2">
+          {{ c.name }}
+          {% if not c.resolved %}<span class="text-xs text-amber-600 block">pending resolution</span>{% endif %}
+        </td>
+        <td class="px-4 py-2">
+          {% if c.resolved %}
+          <form method="post" action="/admin/channels/{{ c.channel_id }}/site-label" class="flex items-center gap-2">
+            <input name="site_label" value="{{ c.site_label or '' }}" placeholder="e.g. Project Site A" class="rounded border border-slate-300 text-sm px-2 py-1 w-48">
             <button type="submit" class="text-xs text-slate-500 hover:text-slate-900 underline">save</button>
           </form>
+          {% else %}
+          <span class="text-xs text-slate-400">—</span>
+          {% endif %}
         </td>
         <td class="px-4 py-2 w-48">
           {% if c.progress_percent is not none %}
@@ -53,14 +80,22 @@
         <td class="px-4 py-2 text-slate-500">
           {% if c.last_polled_at %}{{ c.last_polled_at | gmt8 }}{% else %}<span class="text-amber-600">not scanned yet</span>{% endif %}
         </td>
-        <td class="px-4 py-2 text-right">
-          <form method="post" action="/admin/channels/{{ c.id }}/skip-to-latest" onsubmit="return confirm('Skip the rest of the backlog for this channel and jump straight to the newest message? Any remaining unprocessed history will be permanently skipped.');">
-            <button type="submit" class="text-xs text-slate-500 hover:text-slate-900 underline">skip backlog &rarr; jump to latest</button>
+        <td class="px-4 py-2 text-right whitespace-nowrap">
+          {% if c.resolved %}
+          <form method="post" action="/admin/channels/{{ c.channel_id }}/reset-scan" class="inline" onsubmit="return confirm('Reset this channel\'s scan back to the History Pull Limit window? Progress since then will be re-scanned.');">
+            <button type="submit" class="text-xs text-slate-500 hover:text-slate-900 underline">reset scan</button>
+          </form>
+          <form method="post" action="/admin/channels/{{ c.channel_id }}/skip-to-latest" class="inline" onsubmit="return confirm('Skip the rest of the backlog for this channel and jump straight to the newest message? Any remaining unprocessed history will be permanently skipped.');">
+            <button type="submit" class="text-xs text-slate-500 hover:text-slate-900 underline">skip to latest</button>
+          </form>
+          {% endif %}
+          <form method="post" action="/admin/channels/watchlist/{{ c.watchlist_id }}/remove" class="inline" onsubmit="return confirm('Remove {{ c.name }} from the watchlist? Historical sightings/workers data is kept, but it will stop being scanned until re-added.');">
+            <button type="submit" class="text-xs text-red-600 hover:text-red-800 underline">remove</button>
           </form>
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="6" class="px-4 py-6 text-center text-slate-400">No channels yet — they appear here once the listener processes its first message.</td></tr>
+      <tr><td colspan="7" class="px-4 py-6 text-center text-slate-400">No channels added yet — add one above.</td></tr>
       {% endfor %}
     </tbody>
   </table>

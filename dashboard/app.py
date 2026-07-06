@@ -443,7 +443,6 @@ def admin_settings(request: Request, user: dict = Depends(require_admin), saved:
     conn = get_conn()
     try:
         settings = {
-            "TG_CHANNELS": get_setting(conn, "TG_CHANNELS", ""),
             "MATCH_THRESHOLD": get_setting(conn, "MATCH_THRESHOLD", "0.45"),
             "RETENTION_DAYS": get_setting(conn, "RETENTION_DAYS", "90"),
             "POLL_INTERVAL_SECONDS": get_setting(conn, "POLL_INTERVAL_SECONDS", "60"),
@@ -460,7 +459,6 @@ def admin_settings(request: Request, user: dict = Depends(require_admin), saved:
 @app.post("/admin/settings")
 def admin_settings_save(
     request: Request,
-    tg_channels: str = Form(""),
     match_threshold: str = Form("0.45"),
     retention_days: str = Form("90"),
     poll_interval_seconds: str = Form("60"),
@@ -470,7 +468,6 @@ def admin_settings_save(
 ):
     conn = get_conn()
     try:
-        set_setting(conn, "TG_CHANNELS", tg_channels)
         set_setting(conn, "MATCH_THRESHOLD", match_threshold)
         set_setting(conn, "RETENTION_DAYS", retention_days)
         set_setting(conn, "POLL_INTERVAL_SECONDS", poll_interval_seconds)
@@ -597,10 +594,12 @@ def admin_channels(request: Request, user: dict = Depends(require_admin)):
     try:
         rows = conn.execute(
             """
-            SELECT c.id, c.name, c.site_label, c.last_polled_at, c.last_message_id, c.latest_known_message_id,
+            SELECT wl.id, wl.identifier, wl.enabled,
+                   c.id, c.name, c.site_label, c.last_polled_at, c.last_message_id, c.latest_known_message_id,
                    (SELECT COUNT(*) FROM raw_messages rm WHERE rm.channel_id = c.id AND rm.processed_at IS NULL) AS pending_count
-            FROM channels c
-            ORDER BY c.name
+            FROM channel_watchlist wl
+            LEFT JOIN channels c ON c.identifier = wl.identifier
+            ORDER BY wl.identifier
             """
         ).fetchall()
     finally:
@@ -608,23 +607,68 @@ def admin_channels(request: Request, user: dict = Depends(require_admin)):
 
     channels = []
     for r in rows:
-        last_message_id, latest_known_message_id = r[4], r[5]
+        channel_id, last_message_id, latest_known_message_id, pending_count = r[3], r[7], r[8], r[9]
         progress_percent = None
         if latest_known_message_id and latest_known_message_id > 0:
             progress_percent = min(100, round(last_message_id / latest_known_message_id * 100))
         channels.append(
             {
-                "id": r[0],
-                "name": r[1],
-                "site_label": r[2],
-                "last_polled_at": r[3],
+                "watchlist_id": r[0],
+                "identifier": r[1],
+                "enabled": bool(r[2]),
+                "channel_id": channel_id,
+                "name": r[4] or r[1],
+                "site_label": r[5],
+                "last_polled_at": r[6],
                 "last_message_id": last_message_id,
                 "latest_known_message_id": latest_known_message_id,
                 "progress_percent": progress_percent,
-                "pending_count": r[6],
+                "pending_count": pending_count or 0,
+                "resolved": channel_id is not None,
             }
         )
     return templates.TemplateResponse("admin_channels.html", {"request": request, "user": user, "channels": channels})
+
+
+@app.post("/admin/channels/add")
+def admin_channels_add(request: Request, identifiers: str = Form(...), user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        for line in identifiers.splitlines():
+            ident = line.strip()
+            if ident:
+                conn.execute(
+                    "INSERT INTO channel_watchlist (identifier) VALUES (?) ON CONFLICT(identifier) DO NOTHING",
+                    (ident,),
+                )
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse("/admin/channels", status_code=303)
+
+
+@app.post("/admin/channels/watchlist/{watchlist_id}/toggle")
+def admin_channels_toggle(watchlist_id: int, user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        conn.execute(
+            "UPDATE channel_watchlist SET enabled = 1 - enabled WHERE id = ?", (watchlist_id,)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse("/admin/channels", status_code=303)
+
+
+@app.post("/admin/channels/watchlist/{watchlist_id}/remove")
+def admin_channels_remove(watchlist_id: int, user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM channel_watchlist WHERE id = ?", (watchlist_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse("/admin/channels", status_code=303)
 
 
 @app.post("/admin/channels/{channel_id}/skip-to-latest")
@@ -632,6 +676,17 @@ def admin_channels_skip_to_latest(channel_id: int, user: dict = Depends(require_
     conn = get_conn()
     try:
         conn.execute("UPDATE channels SET skip_to_latest = 1 WHERE id = ?", (channel_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse("/admin/channels", status_code=303)
+
+
+@app.post("/admin/channels/{channel_id}/reset-scan")
+def admin_channels_reset_scan(channel_id: int, user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE channels SET reset_scan = 1 WHERE id = ?", (channel_id,))
         conn.commit()
     finally:
         conn.close()
