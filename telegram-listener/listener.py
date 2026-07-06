@@ -54,13 +54,28 @@ def ensure_channel_rows(conn, client, channel_idents):
 
 
 def poll_once(conn, client, channels):
+    """Processes messages oldest-first per channel, committing after each
+    one. This matters for large backlogs: if a single photo download times
+    out partway through (Telegram's file servers can choke on a burst of
+    many requests in a row, e.g. catching up on hours of history at once),
+    only that message is retried next cycle -- everything processed before
+    it stays committed instead of being rolled back with it."""
     for tg_id, info in channels.items():
-        new_last_id = info["last_message_id"]
         for message in client.iter_messages(info["entity"], min_id=info["last_message_id"], reverse=True):
             photo_path = None
             if message.photo:
                 photo_path = f"/data/incoming/{info['db_id']}_{message.id}.jpg"
-                client.download_media(message, file=photo_path)
+                try:
+                    client.download_media(message, file=photo_path)
+                    time.sleep(0.5)  # avoid bursting many file requests in a row
+                except Exception:
+                    log.warning(
+                        "Failed to download photo for message %s in %s, will retry next cycle",
+                        message.id,
+                        info["name"],
+                        exc_info=True,
+                    )
+                    break  # stop this channel for this cycle; other channels still get processed
 
             if photo_path or message.text:
                 conn.execute(
@@ -71,12 +86,9 @@ def poll_once(conn, client, channels):
                     """,
                     (info["db_id"], message.id, message.date.isoformat(), message.text, photo_path),
                 )
-            new_last_id = max(new_last_id, message.id)
-
-        if new_last_id != info["last_message_id"]:
-            conn.execute("UPDATE channels SET last_message_id = ? WHERE id = ?", (new_last_id, info["db_id"]))
-            info["last_message_id"] = new_last_id
-    conn.commit()
+            conn.execute("UPDATE channels SET last_message_id = ? WHERE id = ?", (message.id, info["db_id"]))
+            conn.commit()
+            info["last_message_id"] = message.id
 
 
 def main():
