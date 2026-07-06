@@ -17,9 +17,13 @@ services:
   telegram-listener:
     image: ghcr.io/ghufxpert84/facial-telegram-listener:latest
     restart: unless-stopped
-    env_file: .env
     environment:
+      TG_API_ID: ${TG_API_ID}
+      TG_API_HASH: ${TG_API_HASH}
+      TG_SESSION_STRING: ${TG_SESSION_STRING}
+      TG_CHANNELS: ${TG_CHANNELS}
       DATABASE_URL: ${DATABASE_URL}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS}
     volumes:
       - ${DATA_DIR:-./data}/incoming:/data/incoming
     depends_on:
@@ -29,9 +33,11 @@ services:
   face-worker:
     image: ghcr.io/ghufxpert84/facial-face-worker:latest
     restart: unless-stopped
-    env_file: .env
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      POLL_INTERVAL_SECONDS: ${POLL_INTERVAL_SECONDS}
+      MATCH_THRESHOLD: ${MATCH_THRESHOLD}
+      RETENTION_DAYS: ${RETENTION_DAYS}
     volumes:
       - ${DATA_DIR:-./data}/incoming:/data/incoming
       - ${DATA_DIR:-./data}/enrolled:/data/enrolled
@@ -42,9 +48,10 @@ services:
   dashboard:
     image: ghcr.io/ghufxpert84/facial-dashboard:latest
     restart: unless-stopped
-    env_file: .env
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      DASHBOARD_USER: ${DASHBOARD_USER}
+      DASHBOARD_PASSWORD_HASH: ${DASHBOARD_PASSWORD_HASH}
     volumes:
       - ${DATA_DIR:-./data}/incoming:/data/incoming:ro
     ports:
