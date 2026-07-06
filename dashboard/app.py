@@ -146,7 +146,7 @@ def worker_detail(worker_id: int, request: Request, user: dict = Depends(require
 
         sightings = conn.execute(
             """
-            SELECT s.timestamp, c.name, c.site_label, s.confidence
+            SELECT s.id, s.timestamp, c.name, c.site_label, s.confidence, s.photo_path
             FROM sightings s JOIN channels c ON c.id = s.channel_id
             WHERE s.worker_id = ? ORDER BY s.timestamp DESC
             """,
@@ -161,7 +161,17 @@ def worker_detail(worker_id: int, request: Request, user: dict = Depends(require
         conn.close()
 
     worker = {"id": w[0], "name": w[1], "employee_id": w[2], "consent_signed_at": w[3], "notes": w[4]}
-    movement = [{"timestamp": s[0], "channel_name": s[1], "site_label": s[2], "confidence": s[3]} for s in sightings]
+    movement = [
+        {
+            "sighting_id": s[0],
+            "timestamp": s[1],
+            "channel_name": s[2],
+            "site_label": s[3],
+            "confidence": s[4],
+            "has_photo": bool(s[5]),
+        }
+        for s in sightings
+    ]
     field_reports = [
         {"timestamp": r[0], "raw_text": r[1], "parsed_fields": json.loads(r[2]) if r[2] else {}} for r in reports
     ]
@@ -170,6 +180,20 @@ def worker_detail(worker_id: int, request: Request, user: dict = Depends(require
         "worker_detail.html",
         {"request": request, "user": user, "worker": worker, "movement": movement, "field_reports": field_reports},
     )
+
+
+@app.get("/workers/{worker_id}/photo/{sighting_id}")
+def worker_sighting_photo(worker_id: int, sighting_id: int, user: dict = Depends(require_login)):
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT photo_path FROM sightings WHERE id = ? AND worker_id = ?", (sighting_id, worker_id)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or not row[0] or not os.path.exists(row[0]):
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return FileResponse(row[0], media_type="image/jpeg")
 
 
 # --- admin: users --------------------------------------------------------------

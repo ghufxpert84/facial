@@ -6,6 +6,28 @@
 <p class="text-sm text-slate-500 mt-1">Consent signed: {{ worker.consent_signed_at }}</p>
 {% if worker.notes %}<p class="text-sm mt-2">{{ worker.notes }}</p>{% endif %}
 
+<h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mt-8 mb-3">Photo gallery</h2>
+<p class="text-xs text-slate-400 mb-3">
+  Shown at whatever resolution Telegram actually delivered — compressed
+  photos are typically downsized by Telegram itself (~1280px on the long
+  side), not necessarily the original camera resolution. Click a photo to
+  open it full-size in a new tab. Only sightings whose photo hasn't been
+  purged yet (see retention setting) appear here.
+</p>
+<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+  {% for m in movement if m.has_photo %}
+  <a href="/workers/{{ worker.id }}/photo/{{ m.sighting_id }}" target="_blank" class="block bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow">
+    <img src="/workers/{{ worker.id }}/photo/{{ m.sighting_id }}" class="w-full h-32 object-cover bg-slate-100" loading="lazy">
+    <div class="p-2">
+      <p class="text-xs text-slate-500 truncate">{{ m.site_label or m.channel_name }}</p>
+      <p class="text-xs text-slate-400 truncate">{{ m.timestamp }}</p>
+    </div>
+  </a>
+  {% else %}
+  <p class="text-slate-400 col-span-full text-center py-6">No photos available yet.</p>
+  {% endfor %}
+</div>
+
 <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mt-8 mb-3">Movement history</h2>
 <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
   <table class="w-full text-sm">
