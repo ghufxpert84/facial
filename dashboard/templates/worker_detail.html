@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}{{ worker.name }}{% endblock %}
+{% block content %}
+<p><a href="/">&larr; back to directory</a></p>
+<h2>{{ worker.name }} <span class="muted">({{ worker.employee_id }})</span></h2>
+<p class="muted">Consent signed: {{ worker.consent_signed_at }}</p>
+{% if worker.notes %}<p>{{ worker.notes }}</p>{% endif %}
+
+<h3>Movement history</h3>
+<table>
+  <tr><th>Timestamp</th><th>Site / Channel</th><th>Confidence</th></tr>
+  {% for m in movement %}
+  <tr>
+    <td>{{ m.timestamp }}</td>
+    <td><span class="badge">{{ m.site_label or m.channel_name }}</span></td>
+    <td>{{ "%.2f"|format(m.confidence) }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="3" class="muted">No sightings yet.</td></tr>
+  {% endfor %}
+</table>
+
+<h3>Field reports</h3>
+<table>
+  <tr><th>Timestamp</th><th>Parsed fields</th><th>Raw text</th></tr>
+  {% for r in field_reports %}
+  <tr>
+    <td>{{ r.timestamp }}</td>
+    <td>
+      {% for k, v in (r.parsed_fields or {}).items() %}
+        <div><strong>{{ k }}:</strong> {{ v }}</div>
+      {% endfor %}
+    </td>
+    <td class="muted">{{ r.raw_text }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="3" class="muted">No field reports yet.</td></tr>
+  {% endfor %}
+</table>
+{% endblock %}

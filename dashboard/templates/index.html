@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Workers{% endblock %}
+{% block content %}
+<h2>Workers ({{ workers|length }})</h2>
+<table>
+  <tr><th>Name</th><th>Employee ID</th><th>Last known site</th><th>Last seen</th></tr>
+  {% for w in workers %}
+  <tr>
+    <td><a href="/workers/{{ w.id }}">{{ w.name }}</a></td>
+    <td>{{ w.employee_id }}</td>
+    <td>
+      {% if w.site_label %}<span class="badge">{{ w.site_label }}</span>
+      {% elif w.channel_name %}<span class="badge">{{ w.channel_name }}</span>
+      {% else %}<span class="muted">no sightings yet</span>{% endif %}
+    </td>
+    <td class="muted">{{ w.last_seen or "—" }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endblock %}
