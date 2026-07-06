@@ -60,7 +60,13 @@ For Portainer-based deployment (Web editor / Stacks), use
 4. **Admin → Users**: add `viewer` accounts for anyone who should see the
    dashboard without managing settings.
 5. **Admin → Channels**: once the listener has processed a channel's first
-   message, give it a human-readable site label here.
+   message, give it a human-readable site label here. Also shows a **last
+   scanned** timestamp per channel, updated every poll cycle regardless of
+   whether new messages were found — a quick way to confirm the listener is
+   actually alive and scanning, not just idle/stuck.
+6. **Admin → Logs**: notable events from `telegram-listener` and
+   `face-worker` (connection changes, download failures, errors) — no need
+   to open Portainer's container logs for routine troubleshooting.
 
 ## Enrolling workers
 

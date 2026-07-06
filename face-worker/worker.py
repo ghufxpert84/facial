@@ -13,12 +13,13 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 import candidates
-from db import get_conn, get_setting
+from db import get_conn, get_setting, log_event, purge_old_logs
 from recognize import match_faces
 from report_extractor import extract_field_report
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("face-worker")
+SERVICE_NAME = "face-worker"
 
 
 def fetch_unprocessed(conn):
@@ -80,6 +81,7 @@ def purge_expired(conn, retention_days):
 def main():
     conn = get_conn()
     log.info("face-worker started")
+    log_event(conn, SERVICE_NAME, "info", "face-worker started")
     while True:
         match_threshold = float(get_setting(conn, "MATCH_THRESHOLD", "0.45"))
         retention_days = int(get_setting(conn, "RETENTION_DAYS", "90"))
@@ -90,9 +92,11 @@ def main():
                 process_message(conn, *row, match_threshold)
             purge_expired(conn, retention_days)
             candidates.purge_expired_candidates(conn, unrecognized_retention_hours)
-        except Exception:
+            purge_old_logs(conn)
+        except Exception as e:
             log.exception("error in worker loop, will retry next interval")
             conn.rollback()
+            log_event(conn, SERVICE_NAME, "error", f"Error in worker loop: {e}")
         time.sleep(poll_interval)
 
 

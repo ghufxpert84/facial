@@ -15,10 +15,11 @@ from telethon.sync import TelegramClient
 from telethon.sessions import StringSession
 from telethon.errors import FloodWaitError
 
-from db import get_conn, get_setting
+from db import get_conn, get_setting, log_event, purge_old_logs
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("listener")
+SERVICE_NAME = "telegram-listener"
 
 
 def load_config(conn):
@@ -83,12 +84,18 @@ def poll_once(conn, client, channels, history_pull_hours):
                 try:
                     client.download_media(message, file=photo_path)
                     time.sleep(0.5)  # avoid bursting many file requests in a row
-                except Exception:
+                except Exception as e:
                     log.warning(
                         "Failed to download photo for message %s in %s, will retry next cycle",
                         message.id,
                         info["name"],
                         exc_info=True,
+                    )
+                    log_event(
+                        conn,
+                        SERVICE_NAME,
+                        "warning",
+                        f"Failed to download photo for message {message.id} in {info['name']}: {e} -- will retry next cycle",
                     )
                     break  # stop this channel for this cycle; other channels still get processed
 
@@ -105,11 +112,21 @@ def poll_once(conn, client, channels, history_pull_hours):
             conn.commit()
             info["last_message_id"] = message.id
 
+        # Record that this channel was actually scanned this cycle, whether
+        # or not any new messages were found -- this is what lets the
+        # dashboard show "last checked N seconds ago" per channel.
+        conn.execute(
+            "UPDATE channels SET last_polled_at = ? WHERE id = ?",
+            (datetime.now(timezone.utc).isoformat(), info["db_id"]),
+        )
+        conn.commit()
+
 
 def main():
     conn = get_conn()
     client = None
     active_session_string = None
+    was_waiting = False
 
     while True:
         api_id, api_hash, session_string, channel_idents, poll_interval, history_pull_hours = load_config(conn)
@@ -120,8 +137,14 @@ def main():
                 client = None
                 active_session_string = None
             log.info("Waiting for Telegram to be connected via the admin UI (Admin -> Telegram)...")
+            if not was_waiting:
+                log_event(
+                    conn, SERVICE_NAME, "warning", "Waiting for Telegram to be connected via the admin UI"
+                )
+                was_waiting = True
             time.sleep(10)
             continue
+        was_waiting = False
 
         if client is None or session_string != active_session_string:
             if client is not None:
@@ -130,18 +153,22 @@ def main():
             client.connect()
             active_session_string = session_string
             log.info("Telegram client (re)connected")
+            log_event(conn, SERVICE_NAME, "info", "Telegram client (re)connected")
 
         try:
             channels = ensure_channel_rows(conn, client, channel_idents)
             log.info("Watching channels: %s", [c["name"] for c in channels.values()])
             poll_once(conn, client, channels, history_pull_hours)
+            purge_old_logs(conn)
         except FloodWaitError as e:
             log.warning("Flood wait, sleeping %ss", e.seconds)
+            log_event(conn, SERVICE_NAME, "warning", f"Flood wait, sleeping {e.seconds}s")
             time.sleep(e.seconds)
             continue
-        except Exception:
+        except Exception as e:
             log.exception("Error during poll, will retry next interval")
             conn.rollback()
+            log_event(conn, SERVICE_NAME, "error", f"Error during poll: {e}")
         time.sleep(poll_interval)
 
 

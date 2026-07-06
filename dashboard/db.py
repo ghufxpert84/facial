@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS channels (
     telegram_channel_id INTEGER UNIQUE NOT NULL,
     name TEXT NOT NULL,
     site_label TEXT,
-    last_message_id INTEGER NOT NULL DEFAULT 0
+    last_message_id INTEGER NOT NULL DEFAULT 0,
+    last_polled_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS raw_messages (
@@ -92,6 +93,15 @@ CREATE TABLE IF NOT EXISTS unrecognized_faces (
     sightings_count INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS idx_unrecognized_faces_last_seen ON unrecognized_faces (last_seen);
+
+CREATE TABLE IF NOT EXISTS logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    service TEXT NOT NULL,
+    level TEXT NOT NULL,
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_logs_created_at ON logs (created_at DESC);
 """
 
 
@@ -101,6 +111,15 @@ def get_conn():
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA busy_timeout = 5000")
     conn.executescript(SCHEMA_SQL)
+    # channels.last_polled_at was added after channels already shipped, so
+    # CREATE TABLE IF NOT EXISTS won't retrofit it onto an existing
+    # database -- this covers upgrades; it's a no-op on fresh installs
+    # since the CREATE TABLE above already includes the column.
+    try:
+        conn.execute("ALTER TABLE channels ADD COLUMN last_polled_at TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
     return conn
 
 
@@ -143,5 +162,20 @@ def set_setting(conn, key, value, encrypt=False):
     conn.execute(
         "INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
         (key, value),
+    )
+    conn.commit()
+
+
+def log_event(conn, service, level, message):
+    conn.execute(
+        "INSERT INTO logs (service, level, message, created_at) VALUES (?, ?, ?, datetime('now'))",
+        (service, level, message),
+    )
+    conn.commit()
+
+
+def purge_old_logs(conn, keep_last=1000):
+    conn.execute(
+        "DELETE FROM logs WHERE id NOT IN (SELECT id FROM logs ORDER BY id DESC LIMIT ?)", (keep_last,)
     )
     conn.commit()

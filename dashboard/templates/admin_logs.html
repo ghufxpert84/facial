@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Logs{% endblock %}
+{% block content %}
+<h1 class="text-xl font-semibold mb-2">Logs</h1>
+<p class="text-sm text-slate-500 mb-6">
+  Notable events from telegram-listener and face-worker — connection
+  changes, download failures, and errors. Routine per-cycle noise is
+  intentionally left out; showing the last 200 entries.
+</p>
+
+<div class="flex gap-2 mb-4">
+  <a href="/admin/logs" class="text-xs px-3 py-1 rounded-full {{ 'bg-slate-900 text-white' if not selected_service else 'bg-white border border-slate-300 text-slate-600' }}">All</a>
+  {% for s in services %}
+  <a href="/admin/logs?service={{ s }}" class="text-xs px-3 py-1 rounded-full {{ 'bg-slate-900 text-white' if selected_service == s else 'bg-white border border-slate-300 text-slate-600' }}">{{ s }}</a>
+  {% endfor %}
+</div>
+
+<div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
+      <tr>
+        <th class="text-left px-4 py-2">Time</th>
+        <th class="text-left px-4 py-2">Service</th>
+        <th class="text-left px-4 py-2">Level</th>
+        <th class="text-left px-4 py-2">Message</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-slate-100">
+      {% for l in logs %}
+      <tr>
+        <td class="px-4 py-2 text-slate-500 whitespace-nowrap">{{ l.created_at }}</td>
+        <td class="px-4 py-2 whitespace-nowrap">{{ l.service }}</td>
+        <td class="px-4 py-2">
+          <span class="inline-block px-2 py-0.5 rounded-full text-xs font-medium
+            {{ 'bg-red-50 text-red-700' if l.level == 'error' else 'bg-amber-50 text-amber-700' if l.level == 'warning' else 'bg-slate-100 text-slate-600' }}">
+            {{ l.level }}
+          </span>
+        </td>
+        <td class="px-4 py-2">{{ l.message }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="px-4 py-6 text-center text-slate-400">No log entries yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

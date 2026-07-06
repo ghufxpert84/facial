@@ -412,10 +412,12 @@ async def admin_telegram_verify_password(
 def admin_channels(request: Request, user: dict = Depends(require_admin)):
     conn = get_conn()
     try:
-        rows = conn.execute("SELECT id, name, site_label FROM channels ORDER BY name").fetchall()
+        rows = conn.execute(
+            "SELECT id, name, site_label, last_polled_at FROM channels ORDER BY name"
+        ).fetchall()
     finally:
         conn.close()
-    channels = [{"id": r[0], "name": r[1], "site_label": r[2]} for r in rows]
+    channels = [{"id": r[0], "name": r[1], "site_label": r[2], "last_polled_at": r[3]} for r in rows]
     return templates.TemplateResponse("admin_channels.html", {"request": request, "user": user, "channels": channels})
 
 
@@ -558,3 +560,29 @@ def admin_unrecognized_dismiss(candidate_id: int, user: dict = Depends(require_a
         except FileNotFoundError:
             pass
     return RedirectResponse("/admin/unrecognized", status_code=303)
+
+
+# --- admin: logs -------------------------------------------------------------
+
+
+@app.get("/admin/logs")
+def admin_logs(request: Request, user: dict = Depends(require_admin), service: str = ""):
+    conn = get_conn()
+    try:
+        if service:
+            rows = conn.execute(
+                "SELECT service, level, message, created_at FROM logs WHERE service = ? ORDER BY id DESC LIMIT 200",
+                (service,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT service, level, message, created_at FROM logs ORDER BY id DESC LIMIT 200"
+            ).fetchall()
+        services = [r[0] for r in conn.execute("SELECT DISTINCT service FROM logs ORDER BY service").fetchall()]
+    finally:
+        conn.close()
+    logs = [{"service": r[0], "level": r[1], "message": r[2], "created_at": r[3]} for r in rows]
+    return templates.TemplateResponse(
+        "admin_logs.html",
+        {"request": request, "user": user, "logs": logs, "services": services, "selected_service": service},
+    )
