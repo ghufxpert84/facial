@@ -596,11 +596,34 @@ def admin_channels(request: Request, user: dict = Depends(require_admin)):
     conn = get_conn()
     try:
         rows = conn.execute(
-            "SELECT id, name, site_label, last_polled_at FROM channels ORDER BY name"
+            """
+            SELECT c.id, c.name, c.site_label, c.last_polled_at, c.last_message_id, c.latest_known_message_id,
+                   (SELECT COUNT(*) FROM raw_messages rm WHERE rm.channel_id = c.id AND rm.processed_at IS NULL) AS pending_count
+            FROM channels c
+            ORDER BY c.name
+            """
         ).fetchall()
     finally:
         conn.close()
-    channels = [{"id": r[0], "name": r[1], "site_label": r[2], "last_polled_at": r[3]} for r in rows]
+
+    channels = []
+    for r in rows:
+        last_message_id, latest_known_message_id = r[4], r[5]
+        progress_percent = None
+        if latest_known_message_id and latest_known_message_id > 0:
+            progress_percent = min(100, round(last_message_id / latest_known_message_id * 100))
+        channels.append(
+            {
+                "id": r[0],
+                "name": r[1],
+                "site_label": r[2],
+                "last_polled_at": r[3],
+                "last_message_id": last_message_id,
+                "latest_known_message_id": latest_known_message_id,
+                "progress_percent": progress_percent,
+                "pending_count": r[6],
+            }
+        )
     return templates.TemplateResponse("admin_channels.html", {"request": request, "user": user, "channels": channels})
 
 

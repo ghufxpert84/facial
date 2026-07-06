@@ -68,15 +68,22 @@ For Portainer-based deployment (Web editor / Stacks), use
 4. **Admin → Users**: add `viewer` accounts for anyone who should see the
    dashboard without managing settings.
 5. **Admin → Channels**: once the listener has processed a channel's first
-   message, give it a human-readable site label here. Also shows a **last
-   scanned** timestamp per channel, updated every poll cycle regardless of
-   whether new messages were found — a quick way to confirm the listener is
-   actually alive and scanning, not just idle/stuck. A **"skip backlog →
-   jump to latest"** button lets you fast-forward a channel past its
-   remaining unprocessed history straight to the newest message — useful if
-   a channel started catching up on a long backlog before you'd set the
-   history pull limit, or you simply don't want to wait for old history to
-   finish processing.
+   message, give it a human-readable site label here. Also shows:
+   - A **scan progress bar** (`telegram-listener`'s message-ID counter vs.
+     the channel's current newest message) — tells you how far through the
+     backlog it's gotten, not just whether it's "stuck."
+   - A **pending face-match** count — the separate `face-worker` queue of
+     already-downloaded photos/frames not yet matched against workers. A
+     stuck progress bar points at `telegram-listener`; a growing pending
+     count points at `face-worker` — check Admin → Logs for whichever one
+     isn't moving.
+   - A **last scanned** timestamp per channel, updated every poll cycle
+     regardless of whether new messages were found.
+   - A **"skip backlog → jump to latest"** button to fast-forward a channel
+     past its remaining unprocessed history straight to the newest message —
+     useful if a channel started catching up on a long backlog before you'd
+     set the history pull limit, or you simply don't want to wait for old
+     history to finish processing.
 6. **Admin → Logs**: notable events from `telegram-listener` and
    `face-worker` (connection changes, download failures, errors) — no need
    to open Portainer's container logs for routine troubleshooting.

@@ -32,7 +32,8 @@ CREATE TABLE IF NOT EXISTS channels (
     site_label TEXT,
     last_message_id INTEGER NOT NULL DEFAULT 0,
     last_polled_at TEXT,
-    skip_to_latest INTEGER NOT NULL DEFAULT 0
+    skip_to_latest INTEGER NOT NULL DEFAULT 0,
+    latest_known_message_id INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS raw_messages (
@@ -135,6 +136,11 @@ def get_conn():
         pass
     try:
         conn.execute("ALTER TABLE sightings ADD COLUMN video_path TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE channels ADD COLUMN latest_known_message_id INTEGER")
         conn.commit()
     except sqlite3.OperationalError:
         pass

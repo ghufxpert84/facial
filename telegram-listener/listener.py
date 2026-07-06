@@ -77,21 +77,30 @@ def poll_once(conn, client, channels, history_pull_hours):
     isn't useful for tracking current worker location anyway.
     """
     for tg_id, info in channels.items():
+        # A single cheap get_messages(limit=1) call gives us the channel's
+        # current newest message id -- used both to record scan progress
+        # (last_message_id / latest_known_message_id, shown as a percentage
+        # on Admin -> Channels) and, when set, to fast-forward skip_to_latest.
+        latest = client.get_messages(info["entity"], limit=1)
+        latest_known_id = latest[0].id if latest else info["last_message_id"]
+        conn.execute(
+            "UPDATE channels SET latest_known_message_id = ? WHERE id = ?", (latest_known_id, info["db_id"])
+        )
+        conn.commit()
+
         if info["skip_to_latest"]:
-            latest = client.get_messages(info["entity"], limit=1)
-            new_last_id = latest[0].id if latest else info["last_message_id"]
             conn.execute(
                 "UPDATE channels SET last_message_id = ?, skip_to_latest = 0, last_polled_at = ? WHERE id = ?",
-                (new_last_id, datetime.now(timezone.utc).isoformat(), info["db_id"]),
+                (latest_known_id, datetime.now(timezone.utc).isoformat(), info["db_id"]),
             )
             conn.commit()
-            info["last_message_id"] = new_last_id
-            log.info("Skipped remaining backlog for %s, resuming from message %s", info["name"], new_last_id)
+            info["last_message_id"] = latest_known_id
+            log.info("Skipped remaining backlog for %s, resuming from message %s", info["name"], latest_known_id)
             log_event(
                 conn,
                 SERVICE_NAME,
                 "info",
-                f"Skipped remaining backlog for {info['name']} at admin's request, resuming from message {new_last_id}",
+                f"Skipped remaining backlog for {info['name']} at admin's request, resuming from message {latest_known_id}",
             )
             continue  # nothing to process this cycle -- we just fast-forwarded past it, last_polled_at already set above
 
