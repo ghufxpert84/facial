@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 import candidates
 from db import get_conn, get_setting, log_event, purge_old_logs
+from face_model import extract_video_frame
 from recognize import match_faces
 from report_extractor import extract_field_report
 
@@ -24,26 +25,38 @@ SERVICE_NAME = "face-worker"
 
 def fetch_unprocessed(conn):
     return conn.execute(
-        "SELECT id, channel_id, timestamp, caption, photo_path FROM raw_messages "
+        "SELECT id, channel_id, timestamp, caption, photo_path, video_path FROM raw_messages "
         "WHERE processed_at IS NULL ORDER BY id"
     ).fetchall()
 
 
-def process_message(conn, msg_id, channel_id, timestamp, caption, photo_path, match_threshold):
+def process_message(conn, msg_id, channel_id, timestamp, caption, photo_path, video_path, match_threshold):
     sighting_by_worker = {}
 
-    if photo_path and os.path.exists(photo_path):
-        matches, unmatched = match_faces(conn, photo_path, match_threshold)
+    # Videos have no single "the photo" to match against, so pull one
+    # representative frame and run the exact same matching pipeline on it
+    # that photos already use.
+    match_image_path = photo_path
+    if not match_image_path and video_path and os.path.exists(video_path):
+        frame_path = f"{video_path}.frame.jpg"
+        if extract_video_frame(video_path, frame_path):
+            match_image_path = frame_path
+        else:
+            log.warning("Could not extract a frame from %s", video_path)
+            log_event(conn, SERVICE_NAME, "warning", f"Could not extract a frame from {video_path}")
+
+    if match_image_path and os.path.exists(match_image_path):
+        matches, unmatched = match_faces(conn, match_image_path, match_threshold)
         for worker_id, confidence in matches:
             cur = conn.execute(
                 """
-                INSERT INTO sightings (worker_id, channel_id, raw_message_id, timestamp, confidence, photo_path)
-                VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO sightings (worker_id, channel_id, raw_message_id, timestamp, confidence, photo_path, video_path)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (worker_id, channel_id, msg_id, timestamp, confidence, photo_path),
+                (worker_id, channel_id, msg_id, timestamp, confidence, match_image_path, video_path),
             )
             sighting_by_worker[worker_id] = cur.lastrowid
-        candidates.stage_unmatched_faces(conn, unmatched, photo_path, channel_id, msg_id, match_threshold)
+        candidates.stage_unmatched_faces(conn, unmatched, match_image_path, channel_id, msg_id, match_threshold)
 
     parsed = extract_field_report(caption)
     if parsed is not None:
@@ -62,13 +75,16 @@ def process_message(conn, msg_id, channel_id, timestamp, caption, photo_path, ma
 
 
 def purge_expired(conn, retention_days):
+    """Deletes expired raw_messages (cascading to sightings/field_reports)
+    and every file referenced by them -- including video files and their
+    extracted frames, which live on sightings.photo_path/video_path rather
+    than raw_messages (a video's raw_messages row has no photo_path)."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=retention_days)).isoformat()
-    paths = [
-        row[0]
-        for row in conn.execute(
-            "SELECT photo_path FROM raw_messages WHERE timestamp < ? AND photo_path IS NOT NULL", (cutoff,)
-        )
-    ]
+    paths = set()
+    for row in conn.execute("SELECT photo_path, video_path FROM raw_messages WHERE timestamp < ?", (cutoff,)):
+        paths.update(p for p in row if p)
+    for row in conn.execute("SELECT photo_path, video_path FROM sightings WHERE timestamp < ?", (cutoff,)):
+        paths.update(p for p in row if p)
     conn.execute("DELETE FROM raw_messages WHERE timestamp < ?", (cutoff,))
     conn.commit()
     for path in paths:

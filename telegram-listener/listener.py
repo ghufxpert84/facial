@@ -1,5 +1,5 @@
-"""Polls subscribed Telegram channels for new photo/text messages and queues
-them in SQLite for the face-worker service to process.
+"""Polls subscribed Telegram channels for new photo/video/text messages and
+queues them in SQLite for the face-worker service to process.
 
 Unlike earlier versions, Telegram API credentials, the session string, and
 the channel watchlist all live in the app_settings table (set via the
@@ -103,14 +103,22 @@ def poll_once(conn, client, channels, history_pull_hours):
 
         for message in message_iter:
             photo_path = None
+            video_path = None
+            media_target = None
             if message.photo:
                 photo_path = f"/data/incoming/{info['db_id']}_{message.id}.jpg"
+                media_target = photo_path
+            elif message.video:
+                video_path = f"/data/incoming/{info['db_id']}_{message.id}.mp4"
+                media_target = video_path
+
+            if media_target:
                 try:
-                    client.download_media(message, file=photo_path)
+                    client.download_media(message, file=media_target)
                     time.sleep(0.5)  # avoid bursting many file requests in a row
                 except Exception as e:
                     log.warning(
-                        "Failed to download photo for message %s in %s, will retry next cycle",
+                        "Failed to download media for message %s in %s, will retry next cycle",
                         message.id,
                         info["name"],
                         exc_info=True,
@@ -119,18 +127,18 @@ def poll_once(conn, client, channels, history_pull_hours):
                         conn,
                         SERVICE_NAME,
                         "warning",
-                        f"Failed to download photo for message {message.id} in {info['name']}: {e} -- will retry next cycle",
+                        f"Failed to download media for message {message.id} in {info['name']}: {e} -- will retry next cycle",
                     )
                     break  # stop this channel for this cycle; other channels still get processed
 
-            if photo_path or message.text:
+            if photo_path or video_path or message.text:
                 conn.execute(
                     """
-                    INSERT INTO raw_messages (channel_id, telegram_message_id, timestamp, caption, photo_path)
-                    VALUES (?, ?, ?, ?, ?)
+                    INSERT INTO raw_messages (channel_id, telegram_message_id, timestamp, caption, photo_path, video_path)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     ON CONFLICT(channel_id, telegram_message_id) DO NOTHING
                     """,
-                    (info["db_id"], message.id, message.date.isoformat(), message.text, photo_path),
+                    (info["db_id"], message.id, message.date.isoformat(), message.text, photo_path, video_path),
                 )
             conn.execute("UPDATE channels SET last_message_id = ? WHERE id = ?", (message.id, info["db_id"]))
             conn.commit()

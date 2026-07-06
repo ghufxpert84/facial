@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS raw_messages (
     timestamp TEXT NOT NULL,
     caption TEXT,
     photo_path TEXT,
+    video_path TEXT,
     processed_at TEXT,
     UNIQUE (channel_id, telegram_message_id)
 );
@@ -54,7 +55,8 @@ CREATE TABLE IF NOT EXISTS sightings (
     raw_message_id INTEGER NOT NULL REFERENCES raw_messages(id) ON DELETE CASCADE,
     timestamp TEXT NOT NULL,
     confidence REAL NOT NULL,
-    photo_path TEXT
+    photo_path TEXT,
+    video_path TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_sightings_worker_ts ON sightings (worker_id, timestamp DESC);
 
@@ -123,6 +125,16 @@ def get_conn():
         pass
     try:
         conn.execute("ALTER TABLE channels ADD COLUMN skip_to_latest INTEGER NOT NULL DEFAULT 0")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE raw_messages ADD COLUMN video_path TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE sightings ADD COLUMN video_path TEXT")
         conn.commit()
     except sqlite3.OperationalError:
         pass

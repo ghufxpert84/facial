@@ -114,13 +114,15 @@ def worker_directory(request: Request, user: dict = Depends(require_login)):
     try:
         rows = conn.execute(
             """
-            SELECT w.id, w.name, w.employee_id, s.timestamp, c.name, c.site_label
+            SELECT w.id, w.name, w.employee_id, ranked.timestamp, c.name, c.site_label,
+                   EXISTS(SELECT 1 FROM worker_face_embeddings e WHERE e.worker_id = w.id) AS has_avatar
             FROM workers w
             LEFT JOIN (
-                SELECT s1.* FROM sightings s1
-                WHERE s1.timestamp = (SELECT MAX(s2.timestamp) FROM sightings s2 WHERE s2.worker_id = s1.worker_id)
-            ) s ON s.worker_id = w.id
-            LEFT JOIN channels c ON c.id = s.channel_id
+                SELECT worker_id, timestamp, channel_id,
+                       ROW_NUMBER() OVER (PARTITION BY worker_id ORDER BY timestamp DESC, id DESC) AS rn
+                FROM sightings
+            ) ranked ON ranked.worker_id = w.id AND ranked.rn = 1
+            LEFT JOIN channels c ON c.id = ranked.channel_id
             ORDER BY w.name
             """
         ).fetchall()
@@ -128,10 +130,33 @@ def worker_directory(request: Request, user: dict = Depends(require_login)):
         conn.close()
 
     workers = [
-        {"id": r[0], "name": r[1], "employee_id": r[2], "last_seen": r[3], "channel_name": r[4], "site_label": r[5]}
+        {
+            "id": r[0],
+            "name": r[1],
+            "employee_id": r[2],
+            "last_seen": r[3],
+            "channel_name": r[4],
+            "site_label": r[5],
+            "has_avatar": bool(r[6]),
+        }
         for r in rows
     ]
     return templates.TemplateResponse("index.html", {"request": request, "user": user, "workers": workers})
+
+
+@app.get("/workers/{worker_id}/avatar")
+def worker_avatar(worker_id: int, user: dict = Depends(require_login)):
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT source_photo_ref FROM worker_face_embeddings WHERE worker_id = ? ORDER BY created_at DESC LIMIT 1",
+            (worker_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or not row[0] or not os.path.exists(row[0]):
+        raise HTTPException(status_code=404, detail="No avatar available")
+    return FileResponse(row[0], media_type="image/jpeg")
 
 
 @app.get("/workers/{worker_id}")
@@ -146,10 +171,15 @@ def worker_detail(worker_id: int, request: Request, user: dict = Depends(require
 
         sightings = conn.execute(
             """
-            SELECT s.id, s.timestamp, c.name, c.site_label, s.confidence, s.photo_path
+            SELECT s.id, s.timestamp, c.name, c.site_label, s.confidence, s.photo_path, s.video_path
             FROM sightings s JOIN channels c ON c.id = s.channel_id
             WHERE s.worker_id = ? ORDER BY s.timestamp DESC
             """,
+            (worker_id,),
+        ).fetchall()
+
+        embeddings = conn.execute(
+            "SELECT id, created_at FROM worker_face_embeddings WHERE worker_id = ? ORDER BY created_at DESC",
             (worker_id,),
         ).fetchall()
 
@@ -169,17 +199,96 @@ def worker_detail(worker_id: int, request: Request, user: dict = Depends(require
             "site_label": s[3],
             "confidence": s[4],
             "has_photo": bool(s[5]),
+            "has_video": bool(s[6]),
         }
         for s in sightings
     ]
+    reference_photos = [{"id": e[0], "created_at": e[1]} for e in embeddings]
+    gallery_count = len(reference_photos) + sum(1 for m in movement if m["has_photo"])
     field_reports = [
         {"timestamp": r[0], "raw_text": r[1], "parsed_fields": json.loads(r[2]) if r[2] else {}} for r in reports
     ]
 
     return templates.TemplateResponse(
         "worker_detail.html",
-        {"request": request, "user": user, "worker": worker, "movement": movement, "field_reports": field_reports},
+        {
+            "request": request,
+            "user": user,
+            "worker": worker,
+            "movement": movement,
+            "reference_photos": reference_photos,
+            "gallery_count": gallery_count,
+            "field_reports": field_reports,
+        },
     )
+
+
+@app.get("/workers/{worker_id}/edit")
+def worker_edit_form(worker_id: int, request: Request, user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        w = conn.execute(
+            "SELECT id, name, employee_id, consent_signed_at, notes FROM workers WHERE id = ?", (worker_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if w is None:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    worker = {"id": w[0], "name": w[1], "employee_id": w[2], "consent_signed_at": w[3], "notes": w[4]}
+    return templates.TemplateResponse(
+        "worker_edit.html", {"request": request, "user": user, "worker": worker, "error": None}
+    )
+
+
+@app.post("/workers/{worker_id}/edit")
+def worker_edit_submit(
+    worker_id: int,
+    request: Request,
+    name: str = Form(...),
+    employee_id: str = Form(...),
+    consent_signed_at: str = Form(...),
+    notes: str = Form(""),
+    user: dict = Depends(require_admin),
+):
+    conn = get_conn()
+    try:
+        try:
+            conn.execute(
+                "UPDATE workers SET name = ?, employee_id = ?, consent_signed_at = ?, notes = ? WHERE id = ?",
+                (name, employee_id, consent_signed_at, notes or None, worker_id),
+            )
+            conn.commit()
+        except Exception:
+            worker = {
+                "id": worker_id,
+                "name": name,
+                "employee_id": employee_id,
+                "consent_signed_at": consent_signed_at,
+                "notes": notes,
+            }
+            return templates.TemplateResponse(
+                "worker_edit.html",
+                {
+                    "request": request,
+                    "user": user,
+                    "worker": worker,
+                    "error": f"Could not save — employee ID '{employee_id}' may already be in use by another worker.",
+                },
+            )
+    finally:
+        conn.close()
+    return RedirectResponse(f"/workers/{worker_id}", status_code=303)
+
+
+@app.post("/workers/{worker_id}/delete")
+def worker_delete(worker_id: int, user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        conn.execute("DELETE FROM workers WHERE id = ?", (worker_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse("/", status_code=303)
 
 
 @app.get("/workers/{worker_id}/photo/{sighting_id}")
@@ -188,6 +297,35 @@ def worker_sighting_photo(worker_id: int, sighting_id: int, user: dict = Depends
     try:
         row = conn.execute(
             "SELECT photo_path FROM sightings WHERE id = ? AND worker_id = ?", (sighting_id, worker_id)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or not row[0] or not os.path.exists(row[0]):
+        raise HTTPException(status_code=404, detail="Photo not found")
+    return FileResponse(row[0], media_type="image/jpeg")
+
+
+@app.get("/workers/{worker_id}/video/{sighting_id}")
+def worker_sighting_video(worker_id: int, sighting_id: int, user: dict = Depends(require_login)):
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT video_path FROM sightings WHERE id = ? AND worker_id = ?", (sighting_id, worker_id)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None or not row[0] or not os.path.exists(row[0]):
+        raise HTTPException(status_code=404, detail="Video not found")
+    return FileResponse(row[0], media_type="video/mp4")
+
+
+@app.get("/workers/{worker_id}/reference-photo/{embedding_id}")
+def worker_reference_photo(worker_id: int, embedding_id: int, user: dict = Depends(require_login)):
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT source_photo_ref FROM worker_face_embeddings WHERE id = ? AND worker_id = ?",
+            (embedding_id, worker_id),
         ).fetchone()
     finally:
         conn.close()

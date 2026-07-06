@@ -7,6 +7,7 @@
   <table class="w-full text-sm">
     <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
       <tr>
+        <th class="px-4 py-2"></th>
         <th class="text-left px-4 py-2">Name</th>
         <th class="text-left px-4 py-2">Employee ID</th>
         <th class="text-left px-4 py-2">Last known site</th>
@@ -16,6 +17,13 @@
     <tbody class="divide-y divide-slate-100">
       {% for w in workers %}
       <tr class="hover:bg-slate-50">
+        <td class="px-4 py-3">
+          {% if w.has_avatar %}
+          <img src="/workers/{{ w.id }}/avatar" class="w-8 h-8 rounded-full object-cover">
+          {% else %}
+          <span class="w-8 h-8 rounded-full bg-slate-200 text-slate-500 text-xs font-medium flex items-center justify-center">{{ w.name[0]|upper }}</span>
+          {% endif %}
+        </td>
         <td class="px-4 py-3"><a href="/workers/{{ w.id }}" class="text-slate-900 font-medium hover:underline">{{ w.name }}</a></td>
         <td class="px-4 py-3 text-slate-500">{{ w.employee_id }}</td>
         <td class="px-4 py-3">
@@ -26,7 +34,7 @@
         <td class="px-4 py-3 text-slate-500">{{ w.last_seen or "—" }}</td>
       </tr>
       {% else %}
-      <tr><td colspan="4" class="px-4 py-6 text-center text-slate-400">No enrolled workers yet.</td></tr>
+      <tr><td colspan="5" class="px-4 py-6 text-center text-slate-400">No enrolled workers yet.</td></tr>
       {% endfor %}
     </tbody>
   </table>

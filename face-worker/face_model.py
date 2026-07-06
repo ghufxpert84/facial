@@ -24,6 +24,26 @@ def get_faces(image_path):
     return get_app().get(img)
 
 
+def extract_video_frame(video_path, out_path):
+    """Extracts a single representative frame (the middle frame, when the
+    frame count is known) from a video file, since insightface/opencv face
+    detection works on still images, not video streams directly. Returns
+    True on success. opencv-python-headless bundles its own FFmpeg-based
+    video decoding, so no separate ffmpeg binary is needed in the image."""
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        return False
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    if frame_count > 0:
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_count // 2)
+    ok, frame = cap.read()
+    cap.release()
+    if not ok or frame is None:
+        return False
+    cv2.imwrite(out_path, frame)
+    return True
+
+
 def crop_face(image_path, bbox, out_path, padding=0.25):
     """Crops the face region (plus a small padding margin) out of
     image_path and writes it to out_path, for use as a reviewable thumbnail

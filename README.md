@@ -1,9 +1,17 @@
 # Telegram Field-Worker Location Tracker
 
 Tracks where enrolled, consenting workers are currently deployed by matching
-faces in photos they post to a shared Telegram channel, using the channel/site
-as a location proxy. Captures "Field Report" text as biodata linked to the
-worker.
+faces in photos (and now videos — a representative frame is extracted and
+matched the same way) they post to a shared Telegram channel, using the
+channel/site as a location proxy. Captures "Field Report" text as biodata
+linked to the worker.
+
+Each worker's profile page (click their name from the directory) shows a
+small avatar thumbnail, a combined photo gallery (enrollment reference
+photos + every sighting photo, with a "video" badge/link where the sighting
+came from a video), movement history, and field reports. Admins can edit a
+worker's details or permanently delete them (cascades to their embeddings,
+sightings, and field reports) from there too.
 
 **Privacy design, not optional:** face matching only runs against an enrolled
 gallery of your own consenting workers. A face that doesn't match an

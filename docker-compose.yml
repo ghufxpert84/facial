@@ -20,5 +20,6 @@ services:
     volumes:
       - ${DATA_DIR:-./data}/db:/data/db
       - ${DATA_DIR:-./data}/incoming:/data/incoming:ro
+      - ${DATA_DIR:-./data}/enrolled:/data/enrolled:ro
     ports:
       - "127.0.0.1:8080:8080"
