@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Branch directory{% endblock %}
+{% block content %}
+<div class="flex items-center justify-between mb-2">
+  <h1 class="text-xl font-semibold">Branch directory</h1>
+  {% if user.role == 'admin' %}
+  <a href="/admin/branches" class="text-xs text-slate-500 hover:text-slate-900 underline">Edit address / contacts</a>
+  {% endif %}
+</div>
+<p class="text-sm text-slate-500 mb-6">{{ branches|length }} branch{{ 'es' if branches|length != 1 }} — click one to see who's currently there, its location, and contact details.</p>
+
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+  {% for b in branches %}
+  <a href="/branches/{{ b.id }}" class="block bg-white border border-slate-200 rounded-xl shadow-sm p-4 hover:shadow-md hover:border-slate-300 transition-shadow">
+    <div class="flex items-start justify-between gap-2 mb-2">
+      <p class="text-sm font-medium text-slate-900">{{ b.name }}</p>
+      <span class="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 flex-shrink-0">{{ b.worker_count }} worker{{ 's' if b.worker_count != 1 }}</span>
+    </div>
+    <p class="text-xs text-slate-500 mb-2">{{ b.address or "No address set" }}</p>
+    {% if b.description %}
+    <p class="text-xs text-slate-400 line-clamp-2">{{ b.description }}</p>
+    {% endif %}
+    <p class="text-xs text-indigo-600 mt-3">View details &rarr;</p>
+  </a>
+  {% else %}
+  <p class="text-slate-400 col-span-full text-center py-8">No branches yet — set a site label on Admin &rarr; Channels to create one.</p>
+  {% endfor %}
+</div>
+{% endblock %}

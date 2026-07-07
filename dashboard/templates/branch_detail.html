@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% from "_contact_icons.html" import contact_icons %}
+{% block title %}{{ branch.name }}{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<a href="/branches" class="text-sm text-slate-500 hover:text-slate-900">&larr; back to branch directory</a>
+
+<div class="grid grid-cols-1 lg:grid-cols-[1fr_280px] gap-4 mt-3">
+
+  <div class="space-y-4">
+    <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-4">
+      {% if branch.latitude is not none and branch.longitude is not none %}
+      <div id="branch-map" class="w-full h-48 rounded-lg border border-slate-100 mb-3"></div>
+      {% else %}
+      <div class="w-full h-48 rounded-lg bg-slate-100 flex items-center justify-center mb-3">
+        <p class="text-xs text-slate-400 text-center px-3">
+          Location not set for this branch{% if user.role == 'admin' %} — <a href="/admin/branches" class="underline">add it</a>{% endif %}
+        </p>
+      </div>
+      {% endif %}
+      <p class="text-base font-medium text-slate-900">{{ branch.name }}</p>
+      {% if branch.address %}<p class="text-xs text-slate-500 mt-1">{{ branch.address }}</p>{% endif %}
+      <div class="mt-2">
+        {{ contact_icons(branch.telegram_link, branch.telegram_contact, branch.whatsapp_link, branch.whatsapp_contact, branch.wechat_contact) }}
+      </div>
+      {% if branch.map_url %}<a href="{{ branch.map_url }}" target="_blank" class="inline-block mt-2 text-xs text-slate-500 hover:text-slate-900 underline">Open map link</a>{% endif %}
+    </div>
+
+    <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-4">
+      <p class="text-xs font-medium text-slate-600 uppercase tracking-wide mb-3">Description</p>
+      {% if user.role == 'admin' %}
+      <form method="post" action="/branches/{{ branch.id }}/description">
+        <textarea name="description" rows="3" placeholder="Notes about this branch — site supervisor, access instructions, anything worth knowing." class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm resize-none">{{ branch.description or '' }}</textarea>
+        <div class="text-right mt-2">
+          <button type="submit" class="bg-slate-900 text-white rounded-md px-4 py-2 text-sm font-medium hover:bg-slate-800">Save</button>
+        </div>
+      </form>
+      {% else %}
+      <p class="text-sm text-slate-600 whitespace-pre-wrap">{{ branch.description or "No description yet." }}</p>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-4">
+    <p class="text-xs font-medium text-slate-600 uppercase tracking-wide mb-3">Workers here now ({{ workers|length }})</p>
+    <div class="space-y-1">
+      {% for w in workers %}
+      <a href="/workers/{{ w.id }}" class="flex items-center gap-2 py-1.5 hover:bg-slate-50 rounded-md px-1 -mx-1">
+        {% if w.has_avatar %}
+        <img src="/workers/{{ w.id }}/avatar" class="w-6 h-6 rounded-full object-cover flex-shrink-0">
+        {% else %}
+        <span class="w-6 h-6 rounded-full bg-indigo-100 text-indigo-700 text-[10px] font-medium flex items-center justify-center flex-shrink-0">{{ w.name[0]|upper }}</span>
+        {% endif %}
+        <div class="min-w-0">
+          <p class="text-xs text-slate-900 truncate">{{ w.name }}</p>
+          <p class="text-[10px] text-slate-400">{{ w.employee_id }} &middot; {{ w.last_seen | gmt8 }}</p>
+        </div>
+      </a>
+      {% else %}
+      <p class="text-slate-400 text-center py-6 text-xs">No one currently here.</p>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<script>
+  {% if branch.latitude is not none and branch.longitude is not none %}
+  const branchMap = L.map('branch-map').setView([{{ branch.latitude }}, {{ branch.longitude }}], 14);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  }).addTo(branchMap);
+  L.marker([{{ branch.latitude }}, {{ branch.longitude }}]).addTo(branchMap);
+  {% endif %}
+</script>
+{% endblock %}

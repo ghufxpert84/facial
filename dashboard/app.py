@@ -1,4 +1,3 @@
-import json
 import os
 import re
 from datetime import datetime, timedelta, timezone
@@ -330,6 +329,114 @@ def branches_map(request: Request, user: dict = Depends(require_login)):
     )
 
 
+# --- branch directory ---------------------------------------------------------
+#
+# Distinct from Admin -> Branches (which manages address/contacts/coordinates):
+# this is the browsable, read-for-everyone view of a branch, including the
+# free-text description and the current worker list. Editing the description
+# itself is still admin-only.
+
+_CURRENT_WORKER_COUNT_SQL = """
+    SELECT COUNT(DISTINCT ranked.worker_id)
+    FROM (
+        SELECT worker_id, channel_id,
+               ROW_NUMBER() OVER (PARTITION BY worker_id ORDER BY timestamp DESC, id DESC) AS rn
+        FROM sightings
+    ) ranked
+    JOIN channels c ON c.id = ranked.channel_id
+    WHERE ranked.rn = 1 AND c.branch_id = b.id
+"""
+
+
+@app.get("/branches")
+def branch_directory(request: Request, user: dict = Depends(require_login)):
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT b.id, b.name, b.address, b.description, ({_CURRENT_WORKER_COUNT_SQL}) AS worker_count
+            FROM branches b
+            ORDER BY b.name
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    branches = [
+        {"id": r[0], "name": r[1], "address": r[2], "description": r[3], "worker_count": r[4]} for r in rows
+    ]
+    return templates.TemplateResponse("branch_directory.html", {"request": request, "user": user, "branches": branches})
+
+
+@app.get("/branches/{branch_id}")
+def branch_detail(branch_id: int, request: Request, user: dict = Depends(require_login)):
+    conn = get_conn()
+    try:
+        b = conn.execute(
+            """
+            SELECT name, address, map_url, telegram_contact, wechat_contact, whatsapp_contact,
+                   description, latitude, longitude
+            FROM branches WHERE id = ?
+            """,
+            (branch_id,),
+        ).fetchone()
+        if b is None:
+            raise HTTPException(status_code=404, detail="Branch not found")
+
+        workers = conn.execute(
+            f"""
+            SELECT w.id, w.name, w.employee_id, ranked.timestamp,
+                   EXISTS(SELECT 1 FROM worker_face_embeddings e WHERE e.worker_id = w.id) AS has_avatar
+            FROM workers w
+            JOIN (
+                SELECT worker_id, channel_id, timestamp,
+                       ROW_NUMBER() OVER (PARTITION BY worker_id ORDER BY timestamp DESC, id DESC) AS rn
+                FROM sightings
+            ) ranked ON ranked.worker_id = w.id AND ranked.rn = 1
+            JOIN channels c ON c.id = ranked.channel_id
+            WHERE c.branch_id = ?
+            ORDER BY w.name
+            """,
+            (branch_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    branch = {
+        "id": branch_id,
+        "name": b[0],
+        "address": b[1],
+        "map_url": b[2],
+        "telegram_contact": b[3],
+        "wechat_contact": b[4],
+        "whatsapp_contact": b[5],
+        "description": b[6],
+        "latitude": b[7],
+        "longitude": b[8],
+        "telegram_link": _telegram_deep_link(b[3]),
+        "whatsapp_link": _whatsapp_deep_link(b[5]),
+    }
+    workers_here = [
+        {"id": w[0], "name": w[1], "employee_id": w[2], "last_seen": w[3], "has_avatar": bool(w[4])}
+        for w in workers
+    ]
+    return templates.TemplateResponse(
+        "branch_detail.html", {"request": request, "user": user, "branch": branch, "workers": workers_here}
+    )
+
+
+@app.post("/branches/{branch_id}/description")
+def branch_detail_save_description(
+    branch_id: int, description: str = Form(""), user: dict = Depends(require_admin)
+):
+    conn = get_conn()
+    try:
+        conn.execute("UPDATE branches SET description = ? WHERE id = ?", (description or None, branch_id))
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse(f"/branches/{branch_id}", status_code=303)
+
+
 @app.get("/workers/{worker_id}/avatar")
 def worker_avatar(worker_id: int, user: dict = Depends(require_login)):
     conn = get_conn()
@@ -374,8 +481,9 @@ def worker_detail(worker_id: int, request: Request, user: dict = Depends(require
             (worker_id,),
         ).fetchall()
 
-        reports = conn.execute(
-            "SELECT timestamp, raw_text, parsed_fields FROM field_reports WHERE worker_id = ? ORDER BY timestamp DESC",
+        comments = conn.execute(
+            "SELECT id, user_id, author_username, text, created_at FROM worker_comments "
+            "WHERE worker_id = ? ORDER BY created_at DESC",
             (worker_id,),
         ).fetchall()
 
@@ -426,8 +534,15 @@ def worker_detail(worker_id: int, request: Request, user: dict = Depends(require
     ]
     reference_photos = [{"id": e[0], "created_at": e[1]} for e in embeddings]
     gallery_count = len(reference_photos) + sum(1 for m in movement if m["has_photo"])
-    field_reports = [
-        {"timestamp": r[0], "raw_text": r[1], "parsed_fields": json.loads(r[2]) if r[2] else {}} for r in reports
+    comment_list = [
+        {
+            "id": c[0],
+            "can_delete": user["role"] == "admin" or c[1] == user["id"],
+            "author_username": c[2],
+            "text": c[3],
+            "created_at": c[4],
+        }
+        for c in comments
     ]
 
     return templates.TemplateResponse(
@@ -441,9 +556,40 @@ def worker_detail(worker_id: int, request: Request, user: dict = Depends(require
             "current_branch": current_branch,
             "reference_photos": reference_photos,
             "gallery_count": gallery_count,
-            "field_reports": field_reports,
+            "comments": comment_list,
         },
     )
+
+
+@app.post("/workers/{worker_id}/comments")
+def worker_add_comment(worker_id: int, text: str = Form(...), user: dict = Depends(require_login)):
+    text = text.strip()
+    if text:
+        conn = get_conn()
+        try:
+            conn.execute(
+                "INSERT INTO worker_comments (worker_id, user_id, author_username, text) VALUES (?, ?, ?, ?)",
+                (worker_id, user["id"], user["username"], text),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    return RedirectResponse(f"/workers/{worker_id}", status_code=303)
+
+
+@app.post("/workers/{worker_id}/comments/{comment_id}/delete")
+def worker_delete_comment(worker_id: int, comment_id: int, user: dict = Depends(require_login)):
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT user_id FROM worker_comments WHERE id = ? AND worker_id = ?", (comment_id, worker_id)
+        ).fetchone()
+        if row is not None and (user["role"] == "admin" or row[0] == user["id"]):
+            conn.execute("DELETE FROM worker_comments WHERE id = ?", (comment_id,))
+            conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse(f"/workers/{worker_id}", status_code=303)
 
 
 @app.get("/workers/{worker_id}/edit")

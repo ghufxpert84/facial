@@ -123,10 +123,21 @@ CREATE TABLE IF NOT EXISTS branches (
     wechat_contact TEXT,
     whatsapp_contact TEXT,
     captured_info TEXT,
+    description TEXT,
     latitude REAL,
     longitude REAL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE TABLE IF NOT EXISTS worker_comments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    worker_id INTEGER NOT NULL REFERENCES workers(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    author_username TEXT NOT NULL,
+    text TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_worker_comments_worker ON worker_comments (worker_id, created_at DESC);
 """
 
 
@@ -197,6 +208,11 @@ def get_conn():
         pass
     try:
         conn.execute("ALTER TABLE branches ADD COLUMN whatsapp_contact TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE branches ADD COLUMN description TEXT")
         conn.commit()
     except sqlite3.OperationalError:
         pass

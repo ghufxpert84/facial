@@ -3,15 +3,18 @@
 Tracks where enrolled, consenting workers are currently deployed by matching
 faces in photos (and now videos — a representative frame is extracted and
 matched the same way) they post to a shared Telegram channel, using the
-channel/site as a location proxy. Captures "Field Report" text as biodata
-linked to the worker.
+channel/site as a location proxy.
 
 Each worker's profile page (click their name from the directory) shows a
 small avatar thumbnail, a combined photo gallery (enrollment reference
 photos + every sighting photo, with a "video" badge/link where the sighting
-came from a video), movement history, and field reports. Admins can edit a
-worker's details or permanently delete them (cascades to their embeddings,
-sightings, and field reports) from there too.
+came from a video), movement history, the current branch's location/
+contacts, and a **Feedback** section — free-text comments any logged-in
+user can post about that worker (attendance notes, incidents, training
+completed), shown newest-first with the author and timestamp, GitHub-issue
+style. Anyone can delete their own comment; admins can delete any comment.
+Admins can edit a worker's details or permanently delete them (cascades to
+their embeddings, sightings, and feedback comments) from there too.
 
 **Privacy design, not optional:** face matching only runs against an enrolled
 gallery of your own consenting workers. A face that doesn't match an
@@ -156,6 +159,15 @@ A worker's photo gallery uses an in-page **lightbox** (click a thumbnail to
 view full-size, or play a video, without leaving the page — Esc or click
 outside to close) instead of opening a new tab.
 
+The **Branch directory** page (sidebar, visible to all logged-in users) is
+a browsable card grid of every branch — separate from **Admin → Branches**,
+which is where address/contacts/coordinates are actually configured.
+Clicking a card opens that branch's own page: its map pin, contacts, a
+free-text **description** field (e.g. site supervisor, access instructions
+— editable by admins, read-only for viewers), and the live list of workers
+currently there (same "last known site" logic used everywhere else),
+linking straight to each worker's profile.
+
 The **Map** page (sidebar, visible to all logged-in users) plots every
 geocoded branch on an OpenStreetMap map (via Leaflet.js) — no API key
 needed to view it, since displaying OSM tiles is free. Each pin's popup
@@ -198,10 +210,13 @@ vars or a redeploy:
 - **Unrecognized face review window (hours)** (default 72) — how long an
   unmatched face waits in Admin → Unrecognized Faces before being
   auto-purged if nobody names or dismisses it.
-- `report_extractor.py`'s parsing rules are still a generic placeholder
-  ("Field Report" marker + `Key: Value` lines) — this one does require a code
-  change. Share a real anonymized sample message to tighten it to your actual
-  format.
+- `face-worker`'s auto-parsed "Field Report" captions (via
+  `report_extractor.py`) still get written to the `field_reports` table in
+  the background — that pipeline wasn't removed — but the dashboard no
+  longer displays them. The worker profile's **Feedback** section (see
+  above) is the new, manually-authored replacement for that space. If you'd
+  rather fully retire the caption-parsing pipeline (stop face-worker from
+  writing to `field_reports` at all), say so and it can be removed cleanly.
 
 ## What's been verified vs. what still needs testing on your side
 
@@ -247,6 +262,20 @@ Verified in this environment (no Docker/ML libs available here):
   stripped from WhatsApp numbers, and both return `None` cleanly when the
   contact field is empty (so the icon just doesn't render, rather than
   linking to a broken URL).
+- The `branches.description` and `worker_comments` migrations/schema
+  against a real SQLite database: description retrofits onto a
+  pre-existing `branches` table; deleting a user sets `worker_comments.
+  user_id` to `NULL` but keeps the comment (with its denormalized
+  `author_username`) rather than losing it; deleting a worker cascades to
+  delete their comments.
+- The Branch directory's per-branch worker-count query and the branch
+  detail page's "workers here now" query, against seeded sightings —
+  including that a worker with zero sightings correctly doesn't appear
+  anywhere.
+- The comment delete-permission rule (comment owner or an admin, nobody
+  else) against all three combinations directly, plus confirmed via a
+  template render that a viewer never sees a delete link on someone else's
+  comment.
 
 Still needs testing once you have the stack running (on the NAS or a Docker
 dev machine) — none of `bcrypt`, `cryptography`, `itsdangerous`, or
@@ -267,8 +296,8 @@ dev machine) — none of `bcrypt`, `cryptography`, `itsdangerous`, or
   `telegram-listener` picks up the new session and starts polling).
 - `/admin/settings` changes actually taking effect on `face-worker`'s next
   loop iteration without a redeploy.
-- End-to-end: a real posted photo with a Field Report caption flowing through
-  to the dashboard with correct site, timestamp, and parsed fields.
+- End-to-end: a real posted photo flowing through to a worker's profile
+  with the correct site and timestamp.
 - Concurrent writes from telegram-listener and face-worker under real load
   (WAL mode + busy_timeout should handle it, but worth watching for
   "database is locked" errors under heavy volume).
@@ -292,3 +321,9 @@ dev machine) — none of `bcrypt`, `cryptography`, `itsdangerous`, or
   `navigator.clipboard.writeText` succeeds for the WeChat "copy ID" button
   (requires a secure context — HTTPS or localhost — so this only works
   once the dashboard is behind the HTTPS reverse proxy mentioned above).
+- The branch detail page's Leaflet map rendering real tiles in a browser,
+  same caveat as the Map page above.
+- Posting and deleting feedback comments through the actual logged-in
+  session (auth/session handling isn't exercised by the SQLite-only tests
+  above, since `bcrypt`/`itsdangerous` aren't installed in this
+  environment).
