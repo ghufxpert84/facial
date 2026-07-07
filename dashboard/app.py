@@ -321,16 +321,21 @@ def worker_detail(worker_id: int, request: Request, user: dict = Depends(require
     conn = get_conn()
     try:
         w = conn.execute(
-            "SELECT id, name, employee_id, consent_signed_at, notes FROM workers WHERE id = ?", (worker_id,)
+            """
+            SELECT id, name, employee_id, consent_signed_at, notes,
+                   EXISTS(SELECT 1 FROM worker_face_embeddings e WHERE e.worker_id = workers.id)
+            FROM workers WHERE id = ?
+            """,
+            (worker_id,),
         ).fetchone()
         if w is None:
             raise HTTPException(status_code=404, detail="Worker not found")
 
         sightings = conn.execute(
             """
-            SELECT s.id, s.timestamp, c.name, c.site_label, s.confidence, s.photo_path, s.video_path
+            SELECT s.id, s.timestamp, c.name, c.site_label, s.confidence, s.photo_path, s.video_path, c.branch_id
             FROM sightings s JOIN channels c ON c.id = s.channel_id
-            WHERE s.worker_id = ? ORDER BY s.timestamp DESC
+            WHERE s.worker_id = ? ORDER BY s.timestamp DESC, s.id DESC
             """,
             (worker_id,),
         ).fetchall()
@@ -344,10 +349,37 @@ def worker_detail(worker_id: int, request: Request, user: dict = Depends(require
             "SELECT timestamp, raw_text, parsed_fields FROM field_reports WHERE worker_id = ? ORDER BY timestamp DESC",
             (worker_id,),
         ).fetchall()
+
+        current_branch = None
+        if sightings:
+            current_branch_id = sightings[0][7]
+            if current_branch_id is not None:
+                b = conn.execute(
+                    "SELECT name, address, map_url, telegram_contact, wechat_contact, latitude, longitude "
+                    "FROM branches WHERE id = ?",
+                    (current_branch_id,),
+                ).fetchone()
+                if b is not None:
+                    current_branch = {
+                        "name": b[0],
+                        "address": b[1],
+                        "map_url": b[2],
+                        "telegram_contact": b[3],
+                        "wechat_contact": b[4],
+                        "latitude": b[5],
+                        "longitude": b[6],
+                    }
     finally:
         conn.close()
 
-    worker = {"id": w[0], "name": w[1], "employee_id": w[2], "consent_signed_at": w[3], "notes": w[4]}
+    worker = {
+        "id": w[0],
+        "name": w[1],
+        "employee_id": w[2],
+        "consent_signed_at": w[3],
+        "notes": w[4],
+        "has_avatar": bool(w[5]),
+    }
     movement = [
         {
             "sighting_id": s[0],
@@ -373,6 +405,8 @@ def worker_detail(worker_id: int, request: Request, user: dict = Depends(require
             "user": user,
             "worker": worker,
             "movement": movement,
+            "movement_chronological": list(reversed(movement)),
+            "current_branch": current_branch,
             "reference_photos": reference_photos,
             "gallery_count": gallery_count,
             "field_reports": field_reports,

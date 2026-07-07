@@ -1,51 +1,106 @@
 {% extends "base.html" %}
 {% block title %}{{ worker.name }}{% endblock %}
 {% block content %}
-<a href="/" class="text-sm text-slate-500 hover:text-slate-900">&larr; back to directory</a>
-<div class="flex items-center justify-between mt-2">
-  <h1 class="text-xl font-semibold">{{ worker.name }} <span class="text-slate-400 font-normal">({{ worker.employee_id }})</span></h1>
-  {% if user.role == 'admin' %}
-  <a href="/workers/{{ worker.id }}/edit" class="text-sm text-slate-500 hover:text-slate-900 underline">Edit</a>
-  {% endif %}
-</div>
-<p class="text-sm text-slate-500 mt-1">Consent signed: {{ worker.consent_signed_at }}</p>
-{% if worker.notes %}<p class="text-sm mt-2">{{ worker.notes }}</p>{% endif %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-<h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mt-8 mb-3">Photo gallery</h2>
-<p class="text-xs text-slate-400 mb-3">
-  Includes enrollment reference photos and every sighting photo/video frame
-  still on disk. Shown at whatever resolution Telegram actually delivered —
-  compressed photos are typically downsized by Telegram itself (~1280px on
-  the long side), not necessarily the original camera resolution. Click a
-  tile to view it full-size (or play the video, where available) without
-  leaving this page. Sighting photos disappear once purged (see retention
-  setting).
-</p>
-<div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
-  {% for e in reference_photos %}
-  <div onclick="openLightboxImage('/workers/{{ worker.id }}/reference-photo/{{ e.id }}')" class="block cursor-pointer bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-    <img src="/workers/{{ worker.id }}/reference-photo/{{ e.id }}" class="w-full h-32 object-cover bg-slate-100" loading="lazy">
-    <div class="p-2">
-      <p class="text-xs font-medium text-slate-600">Reference photo</p>
-      <p class="text-xs text-slate-400 truncate">{{ e.created_at | gmt8 }}</p>
+<a href="/" class="text-sm text-slate-500 hover:text-slate-900">&larr; back to directory</a>
+
+<div class="grid grid-cols-1 lg:grid-cols-[220px_1fr] gap-4 mt-3">
+
+  <div class="space-y-4">
+    <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-4 text-center">
+      {% if worker.has_avatar %}
+      <img src="/workers/{{ worker.id }}/avatar" class="w-14 h-14 rounded-full object-cover mx-auto mb-2">
+      {% else %}
+      <span class="w-14 h-14 rounded-full bg-indigo-100 text-indigo-700 text-lg font-medium flex items-center justify-center mx-auto mb-2">{{ worker.name[0]|upper }}</span>
+      {% endif %}
+      <p class="text-sm font-medium text-slate-900">{{ worker.name }}</p>
+      <p class="text-xs text-slate-500 mb-2">{{ worker.employee_id }}</p>
+      <p class="text-xs text-slate-400">Consent signed {{ worker.consent_signed_at }}</p>
+      {% if worker.notes %}<p class="text-xs text-slate-500 mt-2">{{ worker.notes }}</p>{% endif %}
+      {% if user.role == 'admin' %}
+      <a href="/workers/{{ worker.id }}/edit" class="inline-block mt-3 text-xs text-slate-500 hover:text-slate-900 underline">Edit profile</a>
+      {% endif %}
+    </div>
+
+    <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-4">
+      <p class="text-xs font-medium text-slate-600 uppercase tracking-wide mb-3">Photo gallery</p>
+      {% set ns = namespace(shown=0) %}
+      <div id="gallery-grid" class="grid grid-cols-2 gap-2">
+        {% for e in reference_photos %}
+        {% set ns.shown = ns.shown + 1 %}
+        <div class="gallery-tile {{ '' if ns.shown <= 6 else 'hidden' }} aspect-square bg-slate-100 rounded-lg overflow-hidden cursor-pointer" onclick="openLightboxImage('/workers/{{ worker.id }}/reference-photo/{{ e.id }}')">
+          <img src="/workers/{{ worker.id }}/reference-photo/{{ e.id }}" class="w-full h-full object-cover" loading="lazy">
+        </div>
+        {% endfor %}
+        {% for m in movement if m.has_photo %}
+        {% set ns.shown = ns.shown + 1 %}
+        <div class="gallery-tile {{ '' if ns.shown <= 6 else 'hidden' }} relative aspect-square bg-slate-100 rounded-lg overflow-hidden cursor-pointer" onclick="{% if m.has_video %}openLightboxVideo('/workers/{{ worker.id }}/video/{{ m.sighting_id }}'){% else %}openLightboxImage('/workers/{{ worker.id }}/photo/{{ m.sighting_id }}'){% endif %}">
+          <img src="/workers/{{ worker.id }}/photo/{{ m.sighting_id }}" class="w-full h-full object-cover" loading="lazy">
+          {% if m.has_video %}<span class="absolute bottom-1 right-1 bg-black/60 text-white text-[9px] px-1 py-0.5 rounded">&#9658;</span>{% endif %}
+        </div>
+        {% endfor %}
+        {% if gallery_count == 0 %}
+        <p class="col-span-2 text-slate-400 text-center py-6 text-xs">No photos yet.</p>
+        {% endif %}
+      </div>
+      {% if gallery_count > 6 %}
+      <button id="gallery-toggle" onclick="toggleGallery()" class="mt-3 text-xs text-slate-500 hover:text-slate-900 underline w-full text-center">Show all {{ gallery_count }} photos</button>
+      {% endif %}
     </div>
   </div>
-  {% endfor %}
-  {% for m in movement if m.has_photo %}
-  <div onclick="{% if m.has_video %}openLightboxVideo('/workers/{{ worker.id }}/video/{{ m.sighting_id }}'){% else %}openLightboxImage('/workers/{{ worker.id }}/photo/{{ m.sighting_id }}'){% endif %}" class="block relative cursor-pointer bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm hover:shadow-md transition-shadow">
-    <img src="/workers/{{ worker.id }}/photo/{{ m.sighting_id }}" class="w-full h-32 object-cover bg-slate-100" loading="lazy">
-    {% if m.has_video %}
-    <span class="absolute top-1 right-1 bg-black/60 text-white text-xs px-1.5 py-0.5 rounded">&#9658; video</span>
-    {% endif %}
-    <div class="p-2">
-      <p class="text-xs text-slate-500 truncate">{{ m.site_label or m.channel_name }}</p>
-      <p class="text-xs text-slate-400 truncate">{{ m.timestamp | gmt8 }}</p>
+
+  <div class="space-y-4">
+    <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-4 flex flex-col sm:flex-row gap-4">
+      {% if current_branch and current_branch.latitude is not none and current_branch.longitude is not none %}
+      <div id="worker-map" class="w-full sm:w-64 h-36 rounded-lg border border-slate-100 flex-shrink-0"></div>
+      {% else %}
+      <div class="w-full sm:w-64 h-36 rounded-lg bg-slate-100 flex items-center justify-center flex-shrink-0">
+        <p class="text-xs text-slate-400 text-center px-3">
+          {% if current_branch %}Location not set for this branch{% if user.role == 'admin' %} — <a href="/admin/branches" class="underline">add it</a>{% endif %}{% else %}No sightings yet{% endif %}
+        </p>
+      </div>
+      {% endif %}
+      <div class="flex-1 min-w-0">
+        <p class="text-xs text-slate-500 mb-0.5">Current branch</p>
+        {% if current_branch %}
+        <p class="text-base font-medium text-slate-900">{{ current_branch.name }}</p>
+        {% if current_branch.address %}<p class="text-xs text-slate-500 mt-1">{{ current_branch.address }}</p>{% endif %}
+        <div class="flex flex-wrap gap-x-4 gap-y-1 mt-2">
+          {% if current_branch.telegram_contact %}<span class="text-xs text-indigo-600">Telegram: {{ current_branch.telegram_contact }}</span>{% endif %}
+          {% if current_branch.wechat_contact %}<span class="text-xs text-indigo-600">WeChat: {{ current_branch.wechat_contact }}</span>{% endif %}
+        </div>
+        {% if current_branch.map_url %}<a href="{{ current_branch.map_url }}" target="_blank" class="inline-block mt-2 text-xs text-slate-500 hover:text-slate-900 underline">Open map link</a>{% endif %}
+        {% else %}
+        <p class="text-sm text-slate-400">No sightings recorded yet.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="bg-white border border-slate-200 rounded-xl shadow-sm p-4">
+      <p class="text-xs font-medium text-slate-600 uppercase tracking-wide mb-4">Movement history</p>
+      {% if movement_chronological %}
+      <div class="flex items-start overflow-x-auto pb-1">
+        {% for m in movement_chronological %}
+        <div class="text-center flex-shrink-0 w-32">
+          <div class="w-2.5 h-2.5 rounded-full {{ 'bg-indigo-600' if loop.index0 % 2 == 0 else 'bg-teal-600' }} mx-auto mb-1.5"></div>
+          <span class="inline-block px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-medium">{{ m.site_label or m.channel_name }}</span>
+          <p class="text-[10px] text-slate-500 mt-1">{{ m.timestamp | gmt8 }}</p>
+          <p class="text-[10px] text-slate-400">conf. {{ "%.2f"|format(m.confidence) }}</p>
+        </div>
+        {% if not loop.last %}
+        <div class="flex-shrink-0 w-10 pt-0.5 text-slate-300">
+          <svg width="30" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 12h14M18 12l-5-5M18 12l-5 5" /></svg>
+        </div>
+        {% endif %}
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="text-slate-400 text-center py-6 text-sm">No sightings yet.</p>
+      {% endif %}
     </div>
   </div>
-  {% endfor %}
-  {% if gallery_count == 0 %}
-  <p class="text-slate-400 col-span-full text-center py-6">No photos available yet.</p>
-  {% endif %}
 </div>
 
 <!-- Lightbox: click a thumbnail above to view full-size without leaving the page -->
@@ -90,31 +145,27 @@
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') closeLightbox();
   });
-</script>
 
-<h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mt-8 mb-3">Movement history</h2>
-<div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-  <table class="w-full text-sm">
-    <thead class="bg-slate-50 text-slate-500 text-xs uppercase tracking-wide">
-      <tr>
-        <th class="text-left px-4 py-2">Timestamp (GMT+8)</th>
-        <th class="text-left px-4 py-2">Site / Channel</th>
-        <th class="text-left px-4 py-2">Confidence</th>
-      </tr>
-    </thead>
-    <tbody class="divide-y divide-slate-100">
-      {% for m in movement %}
-      <tr>
-        <td class="px-4 py-2">{{ m.timestamp | gmt8 }}</td>
-        <td class="px-4 py-2"><span class="inline-block px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-xs font-medium">{{ m.site_label or m.channel_name }}</span></td>
-        <td class="px-4 py-2 text-slate-500">{{ "%.2f"|format(m.confidence) }}</td>
-      </tr>
-      {% else %}
-      <tr><td colspan="3" class="px-4 py-6 text-center text-slate-400">No sightings yet.</td></tr>
-      {% endfor %}
-    </tbody>
-  </table>
-</div>
+  function toggleGallery() {
+    const btn = document.getElementById('gallery-toggle');
+    const hiddenTiles = document.querySelectorAll('#gallery-grid .gallery-tile.hidden');
+    if (hiddenTiles.length > 0) {
+      hiddenTiles.forEach(t => t.classList.remove('hidden'));
+      btn.textContent = 'Show fewer photos';
+    } else {
+      document.querySelectorAll('#gallery-grid .gallery-tile').forEach((t, i) => {
+        if (i >= 6) t.classList.add('hidden');
+      });
+      btn.textContent = 'Show all {{ gallery_count }} photos';
+    }
+  }
+
+  {% if current_branch and current_branch.latitude is not none and current_branch.longitude is not none %}
+  const workerMap = L.map('worker-map', { zoomControl: false, attributionControl: false }).setView([{{ current_branch.latitude }}, {{ current_branch.longitude }}], 14);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(workerMap);
+  L.marker([{{ current_branch.latitude }}, {{ current_branch.longitude }}]).addTo(workerMap);
+  {% endif %}
+</script>
 
 <h2 class="text-sm font-semibold text-slate-500 uppercase tracking-wide mt-8 mb-3">Field reports</h2>
 <div class="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
