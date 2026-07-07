@@ -41,11 +41,16 @@
       </div>
       <div>
         <label class="block text-sm font-medium text-slate-700 mb-1">Telegram contact</label>
-        <input name="telegram_contact" value="{{ b.telegram_contact or '' }}" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+        <input name="telegram_contact" value="{{ b.telegram_contact or '' }}" placeholder="username, without @" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
       </div>
       <div>
+        <label class="block text-sm font-medium text-slate-700 mb-1">WhatsApp contact</label>
+        <input name="whatsapp_contact" value="{{ b.whatsapp_contact or '' }}" placeholder="phone number with country code" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+      </div>
+      <div class="sm:col-span-2">
         <label class="block text-sm font-medium text-slate-700 mb-1">WeChat contact</label>
         <input name="wechat_contact" value="{{ b.wechat_contact or '' }}" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+        <p class="text-xs text-slate-400 mt-1">WeChat has no direct "open chat" link — the worker profile page lets you copy this ID instead.</p>
       </div>
       <div>
         <label class="block text-sm font-medium text-slate-700 mb-1">Latitude</label>

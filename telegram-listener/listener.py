@@ -139,6 +139,11 @@ def _apply_captured_info_to_branch(conn, branch_id, about):
                 "UPDATE branches SET address = ? WHERE id = ? AND (address IS NULL OR address = '')",
                 (value, branch_id),
             )
+        elif "whatsapp" in key:
+            conn.execute(
+                "UPDATE branches SET whatsapp_contact = ? WHERE id = ? AND (whatsapp_contact IS NULL OR whatsapp_contact = '')",
+                (value, branch_id),
+            )
         elif "wechat" in key:
             conn.execute(
                 "UPDATE branches SET wechat_contact = ? WHERE id = ? AND (wechat_contact IS NULL OR wechat_contact = '')",

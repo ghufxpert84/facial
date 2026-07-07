@@ -34,6 +34,7 @@
     if (b.address) popup += `${b.address}<br>`;
     popup += `${b.worker_count} worker${b.worker_count === 1 ? '' : 's'} currently here<br>`;
     if (b.telegram_contact) popup += `Telegram: ${b.telegram_contact}<br>`;
+    if (b.whatsapp_contact) popup += `WhatsApp: ${b.whatsapp_contact}<br>`;
     if (b.wechat_contact) popup += `WeChat: ${b.wechat_contact}<br>`;
     if (b.map_url) popup += `<a href="${b.map_url}" target="_blank">Open in maps</a>`;
     popup += '</div>';

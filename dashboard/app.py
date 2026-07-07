@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -62,6 +63,11 @@ def _apply_captured_info_to_branch(conn, branch_id, about):
                 "UPDATE branches SET address = ? WHERE id = ? AND (address IS NULL OR address = '')",
                 (value, branch_id),
             )
+        elif "whatsapp" in key:
+            conn.execute(
+                "UPDATE branches SET whatsapp_contact = ? WHERE id = ? AND (whatsapp_contact IS NULL OR whatsapp_contact = '')",
+                (value, branch_id),
+            )
         elif "wechat" in key:
             conn.execute(
                 "UPDATE branches SET wechat_contact = ? WHERE id = ? AND (wechat_contact IS NULL OR wechat_contact = '')",
@@ -72,6 +78,28 @@ def _apply_captured_info_to_branch(conn, branch_id, about):
                 "UPDATE branches SET telegram_contact = ? WHERE id = ? AND (telegram_contact IS NULL OR telegram_contact = '')",
                 (value, branch_id),
             )
+
+
+def _telegram_deep_link(contact):
+    """t.me links open the Telegram app directly to a chat (mobile and
+    desktop both handle this URI). Only works with a username, not a raw
+    phone number -- Telegram has no universal link for the latter."""
+    if not contact:
+        return None
+    return f"https://t.me/{contact.lstrip('@').strip()}"
+
+
+def _whatsapp_deep_link(contact):
+    """wa.me links open WhatsApp directly to a chat with this number, on
+    both mobile and desktop. Needs digits only (country code included, no
+    +/spaces/dashes) -- strip everything else out rather than trusting the
+    stored format."""
+    if not contact:
+        return None
+    digits = re.sub(r"\D", "", contact)
+    if not digits:
+        return None
+    return f"https://wa.me/{digits}"
 
 
 def _geocode_address(conn, address):
@@ -260,7 +288,7 @@ def branches_map(request: Request, user: dict = Depends(require_login)):
         rows = conn.execute(
             """
             SELECT b.id, b.name, b.address, b.map_url, b.telegram_contact, b.wechat_contact,
-                   b.latitude, b.longitude,
+                   b.whatsapp_contact, b.latitude, b.longitude,
                    (
                        SELECT COUNT(DISTINCT ranked.worker_id)
                        FROM (
@@ -289,9 +317,10 @@ def branches_map(request: Request, user: dict = Depends(require_login)):
             "map_url": r[3],
             "telegram_contact": r[4],
             "wechat_contact": r[5],
-            "latitude": r[6],
-            "longitude": r[7],
-            "worker_count": r[8],
+            "whatsapp_contact": r[6],
+            "latitude": r[7],
+            "longitude": r[8],
+            "worker_count": r[9],
         }
         for r in rows
     ]
@@ -355,8 +384,8 @@ def worker_detail(worker_id: int, request: Request, user: dict = Depends(require
             current_branch_id = sightings[0][7]
             if current_branch_id is not None:
                 b = conn.execute(
-                    "SELECT name, address, map_url, telegram_contact, wechat_contact, latitude, longitude "
-                    "FROM branches WHERE id = ?",
+                    "SELECT name, address, map_url, telegram_contact, wechat_contact, whatsapp_contact, "
+                    "latitude, longitude FROM branches WHERE id = ?",
                     (current_branch_id,),
                 ).fetchone()
                 if b is not None:
@@ -366,8 +395,11 @@ def worker_detail(worker_id: int, request: Request, user: dict = Depends(require
                         "map_url": b[2],
                         "telegram_contact": b[3],
                         "wechat_contact": b[4],
-                        "latitude": b[5],
-                        "longitude": b[6],
+                        "whatsapp_contact": b[5],
+                        "latitude": b[6],
+                        "longitude": b[7],
+                        "telegram_link": _telegram_deep_link(b[3]),
+                        "whatsapp_link": _whatsapp_deep_link(b[5]),
                     }
     finally:
         conn.close()
@@ -940,8 +972,8 @@ def admin_branches(request: Request, user: dict = Depends(require_admin), geocod
     try:
         rows = conn.execute(
             """
-            SELECT b.id, b.name, b.address, b.map_url, b.telegram_contact, b.wechat_contact, b.captured_info,
-                   b.latitude, b.longitude,
+            SELECT b.id, b.name, b.address, b.map_url, b.telegram_contact, b.wechat_contact,
+                   b.whatsapp_contact, b.captured_info, b.latitude, b.longitude,
                    (SELECT COUNT(*) FROM channels c WHERE c.branch_id = b.id) AS channel_count
             FROM branches b
             ORDER BY b.name
@@ -957,10 +989,11 @@ def admin_branches(request: Request, user: dict = Depends(require_admin), geocod
             "map_url": r[3],
             "telegram_contact": r[4],
             "wechat_contact": r[5],
-            "captured_info": r[6],
-            "latitude": r[7],
-            "longitude": r[8],
-            "channel_count": r[9],
+            "whatsapp_contact": r[6],
+            "captured_info": r[7],
+            "latitude": r[8],
+            "longitude": r[9],
+            "channel_count": r[10],
         }
         for r in rows
     ]
@@ -977,6 +1010,7 @@ def admin_branches_save(
     map_url: str = Form(""),
     telegram_contact: str = Form(""),
     wechat_contact: str = Form(""),
+    whatsapp_contact: str = Form(""),
     latitude: str = Form(""),
     longitude: str = Form(""),
     user: dict = Depends(require_admin),
@@ -992,7 +1026,8 @@ def admin_branches_save(
         conn.execute(
             """
             UPDATE branches
-            SET address = ?, map_url = ?, telegram_contact = ?, wechat_contact = ?, latitude = ?, longitude = ?
+            SET address = ?, map_url = ?, telegram_contact = ?, wechat_contact = ?, whatsapp_contact = ?,
+                latitude = ?, longitude = ?
             WHERE id = ?
             """,
             (
@@ -1000,6 +1035,7 @@ def admin_branches_save(
                 map_url or None,
                 telegram_contact or None,
                 wechat_contact or None,
+                whatsapp_contact or None,
                 lat_value,
                 lon_value,
                 branch_id,

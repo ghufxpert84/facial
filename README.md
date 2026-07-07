@@ -137,11 +137,20 @@ The worker directory has a **branch filter** — a dropdown to show only
 workers whose last-known site matches a selected branch. A photo's site
 label (Admin → Channels) automatically creates/links a **Branch** entity
 (Admin → Branches), where you can fill in address, a map link, and Telegram/
-WeChat contact details. When a channel is first discovered or its scan is
-reset, the system also fetches the channel's own Telegram "About" text and
-best-effort extracts `Address:`/`Telegram:`/`WeChat:` style lines into the
-branch automatically (never overwriting a manual edit) — the raw captured
-text is always kept too, in case the auto-extraction missed something.
+WhatsApp/WeChat contact details. When a channel is first discovered or its
+scan is reset, the system also fetches the channel's own Telegram "About"
+text and best-effort extracts `Address:`/`Telegram:`/`WhatsApp:`/`WeChat:`
+style lines into the branch automatically (never overwriting a manual edit)
+— the raw captured text is always kept too, in case the auto-extraction
+missed something.
+
+On a worker's profile page, the current branch's contacts show as tappable
+icons instead of plain text: **Telegram** and **WhatsApp** open straight
+into a chat (`t.me/...` / `wa.me/...` deep links — the Telegram field
+should hold a username, the WhatsApp field a phone number with country
+code). **WeChat** has no equivalent public deep link to open a chat by ID,
+so its icon instead copies the ID to the clipboard with a "Copied!"
+confirmation, since the recipient still has to search for it inside WeChat.
 
 A worker's photo gallery uses an in-page **lightbox** (click a thumbnail to
 view full-size, or play a video, without leaving the page — Esc or click
@@ -151,8 +160,8 @@ The **Map** page (sidebar, visible to all logged-in users) plots every
 geocoded branch on an OpenStreetMap map (via Leaflet.js) — no API key
 needed to view it, since displaying OSM tiles is free. Each pin's popup
 shows the branch's address, how many workers are currently there (same
-"last known site" logic as the worker directory), and its Telegram/WeChat
-contacts. To place a branch on the map, go to **Admin → Branches** and
+"last known site" logic as the worker directory), and its Telegram/
+WhatsApp/WeChat contacts. To place a branch on the map, go to **Admin → Branches** and
 either type in its latitude/longitude directly, or save an address and
 click "look up from address" to auto-fill coordinates via OpenStreetMap's
 free Nominatim geocoder (rate-limited, fine for occasional manual lookups).
@@ -232,6 +241,12 @@ Verified in this environment (no Docker/ML libs available here):
   (admin/viewer), across empty and populated data — catches template
   syntax errors before deploy, though it can't verify Tailwind/Leaflet
   actually look right in a browser.
+- The `branches.whatsapp_contact` migration on a pre-existing database, and
+  the `t.me`/`wa.me` deep-link builders: confirmed leading `@` is stripped
+  from Telegram usernames, non-digit characters (spaces, dashes, `+`) are
+  stripped from WhatsApp numbers, and both return `None` cleanly when the
+  contact field is empty (so the icon just doesn't render, rather than
+  linking to a broken URL).
 
 Still needs testing once you have the stack running (on the NAS or a Docker
 dev machine) — none of `bcrypt`, `cryptography`, `itsdangerous`, or
@@ -270,3 +285,10 @@ dev machine) — none of `bcrypt`, `cryptography`, `itsdangerous`, or
 - The Admin → Channels progress bar actually animating in a real browser
   after clicking reset scan (the underlying DB math is verified above, but
   the polling JS itself needs a browser to confirm).
+- On an actual phone, tapping the Telegram/WhatsApp icons on a worker
+  profile should hand off to the installed app (or its web fallback if not
+  installed) — this depends on the OS/browser's URI-scheme handling, which
+  can't be exercised outside a real device. Same for confirming
+  `navigator.clipboard.writeText` succeeds for the WeChat "copy ID" button
+  (requires a secure context — HTTPS or localhost — so this only works
+  once the dashboard is behind the HTTPS reverse proxy mentioned above).
