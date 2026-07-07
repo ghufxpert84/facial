@@ -32,11 +32,18 @@
       <p class="text-xs font-medium text-slate-600 uppercase tracking-wide mb-3">Description</p>
       {% if user.role == 'admin' %}
       <form method="post" action="/branches/{{ branch.id }}/description">
-        <textarea name="description" rows="3" placeholder="Notes about this branch — site supervisor, access instructions, anything worth knowing." class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm resize-none">{{ branch.description or '' }}</textarea>
+        <textarea id="description-field" name="description" rows="4" placeholder="Notes about this branch — site supervisor, access instructions, anything worth knowing." class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm min-h-[6rem]" oninput="autoGrow(this)">{{ branch.description or '' }}</textarea>
         <div class="text-right mt-2">
           <button type="submit" class="bg-slate-900 text-white rounded-md px-4 py-2 text-sm font-medium hover:bg-slate-800">Save</button>
         </div>
       </form>
+      <script>
+        function autoGrow(el) {
+          el.style.height = 'auto';
+          el.style.height = el.scrollHeight + 'px';
+        }
+        autoGrow(document.getElementById('description-field'));
+      </script>
       {% else %}
       <p class="text-sm text-slate-600 whitespace-pre-wrap">{{ branch.description or "No description yet." }}</p>
       {% endif %}
