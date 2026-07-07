@@ -2,6 +2,7 @@ import json
 import os
 from datetime import datetime, timedelta, timezone
 
+import requests
 from fastapi import Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
@@ -71,6 +72,41 @@ def _apply_captured_info_to_branch(conn, branch_id, about):
                 "UPDATE branches SET telegram_contact = ? WHERE id = ? AND (telegram_contact IS NULL OR telegram_contact = '')",
                 (value, branch_id),
             )
+
+
+def _geocode_address(conn, address):
+    """Best-effort address -> (lat, lon) lookup for the branch map. Uses
+    OpenStreetMap's free Nominatim service by default (no API key needed,
+    but rate-limited to ~1 req/sec and requires a descriptive User-Agent
+    per its usage policy -- fine for a manually-triggered single lookup).
+    If an admin has set GEOCODE_PROVIDER=locationiq with a GEOCODE_API_KEY
+    in Admin -> Settings, uses that instead for higher-volume/more reliable
+    lookups. Returns None if nothing could be resolved."""
+    provider = get_setting(conn, "GEOCODE_PROVIDER", "nominatim")
+    try:
+        if provider == "locationiq":
+            api_key = get_setting(conn, "GEOCODE_API_KEY", None, decrypt=True)
+            if not api_key:
+                return None
+            resp = requests.get(
+                "https://us1.locationiq.com/v1/search",
+                params={"key": api_key, "q": address, "format": "json", "limit": 1},
+                timeout=10,
+            )
+        else:
+            resp = requests.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": address, "format": "json", "limit": 1},
+                headers={"User-Agent": "telegram-worker-tracker/1.0 (self-hosted)"},
+                timeout=10,
+            )
+        resp.raise_for_status()
+        results = resp.json()
+    except Exception:
+        return None
+    if not results:
+        return None
+    return float(results[0]["lat"]), float(results[0]["lon"])
 
 
 app = FastAPI()
@@ -184,6 +220,10 @@ def worker_directory(request: Request, user: dict = Depends(require_login), bran
             (branch, branch),
         ).fetchall()
         branches = [r[0] for r in conn.execute("SELECT name FROM branches ORDER BY name").fetchall()]
+        pending_review_count = conn.execute("SELECT COUNT(*) FROM unrecognized_faces").fetchone()[0]
+        seen_today_count = conn.execute(
+            "SELECT COUNT(DISTINCT worker_id) FROM sightings WHERE date(timestamp) = date('now')"
+        ).fetchone()[0]
     finally:
         conn.close()
 
@@ -201,7 +241,63 @@ def worker_directory(request: Request, user: dict = Depends(require_login), bran
     ]
     return templates.TemplateResponse(
         "index.html",
-        {"request": request, "user": user, "workers": workers, "branches": branches, "selected_branch": branch},
+        {
+            "request": request,
+            "user": user,
+            "workers": workers,
+            "branches": branches,
+            "selected_branch": branch,
+            "pending_review_count": pending_review_count,
+            "seen_today_count": seen_today_count,
+        },
+    )
+
+
+@app.get("/map")
+def branches_map(request: Request, user: dict = Depends(require_login)):
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT b.id, b.name, b.address, b.map_url, b.telegram_contact, b.wechat_contact,
+                   b.latitude, b.longitude,
+                   (
+                       SELECT COUNT(DISTINCT ranked.worker_id)
+                       FROM (
+                           SELECT worker_id, channel_id,
+                                  ROW_NUMBER() OVER (PARTITION BY worker_id ORDER BY timestamp DESC, id DESC) AS rn
+                           FROM sightings
+                       ) ranked
+                       JOIN channels c ON c.id = ranked.channel_id
+                       WHERE ranked.rn = 1 AND c.branch_id = b.id
+                   ) AS worker_count
+            FROM branches b
+            WHERE b.latitude IS NOT NULL AND b.longitude IS NOT NULL
+            ORDER BY b.name
+            """
+        ).fetchall()
+        unplaced_count = conn.execute(
+            "SELECT COUNT(*) FROM branches WHERE latitude IS NULL OR longitude IS NULL"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    branches = [
+        {
+            "id": r[0],
+            "name": r[1],
+            "address": r[2],
+            "map_url": r[3],
+            "telegram_contact": r[4],
+            "wechat_contact": r[5],
+            "latitude": r[6],
+            "longitude": r[7],
+            "worker_count": r[8],
+        }
+        for r in rows
+    ]
+    return templates.TemplateResponse(
+        "map.html",
+        {"request": request, "user": user, "branches": branches, "unplaced_count": unplaced_count},
     )
 
 
@@ -488,6 +584,8 @@ def admin_settings(request: Request, user: dict = Depends(require_admin), saved:
             "POLL_INTERVAL_SECONDS": get_setting(conn, "POLL_INTERVAL_SECONDS", "60"),
             "UNRECOGNIZED_RETENTION_HOURS": get_setting(conn, "UNRECOGNIZED_RETENTION_HOURS", "72"),
             "HISTORY_PULL_HOURS": get_setting(conn, "HISTORY_PULL_HOURS", "24"),
+            "GEOCODE_PROVIDER": get_setting(conn, "GEOCODE_PROVIDER", "nominatim"),
+            "GEOCODE_API_KEY_SET": bool(get_setting(conn, "GEOCODE_API_KEY", None, decrypt=True)),
         }
     finally:
         conn.close()
@@ -504,6 +602,8 @@ def admin_settings_save(
     poll_interval_seconds: str = Form("60"),
     unrecognized_retention_hours: str = Form("72"),
     history_pull_hours: str = Form("24"),
+    geocode_provider: str = Form("nominatim"),
+    geocode_api_key: str = Form(""),
     user: dict = Depends(require_admin),
 ):
     conn = get_conn()
@@ -513,6 +613,9 @@ def admin_settings_save(
         set_setting(conn, "POLL_INTERVAL_SECONDS", poll_interval_seconds)
         set_setting(conn, "UNRECOGNIZED_RETENTION_HOURS", unrecognized_retention_hours)
         set_setting(conn, "HISTORY_PULL_HOURS", history_pull_hours)
+        set_setting(conn, "GEOCODE_PROVIDER", geocode_provider)
+        if geocode_api_key.strip():
+            set_setting(conn, "GEOCODE_API_KEY", geocode_api_key.strip(), encrypt=True)
     finally:
         conn.close()
     return RedirectResponse("/admin/settings?saved=true", status_code=303)
@@ -726,11 +829,43 @@ def admin_channels_skip_to_latest(channel_id: int, user: dict = Depends(require_
 def admin_channels_reset_scan(channel_id: int, user: dict = Depends(require_admin)):
     conn = get_conn()
     try:
-        conn.execute("UPDATE channels SET reset_scan = 1 WHERE id = ?", (channel_id,))
+        # Zero last_message_id here immediately (not waiting for
+        # telegram-listener's next poll cycle to notice reset_scan=1) so the
+        # progress bar drops to 0% right away instead of sitting stale at
+        # its old value until the listener catches up.
+        conn.execute("UPDATE channels SET reset_scan = 1, last_message_id = 0 WHERE id = ?", (channel_id,))
         conn.commit()
     finally:
         conn.close()
     return RedirectResponse("/admin/channels", status_code=303)
+
+
+@app.get("/admin/channels/{channel_id}/progress")
+def admin_channels_progress(channel_id: int, user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        row = conn.execute(
+            "SELECT last_message_id, latest_known_message_id, last_polled_at FROM channels WHERE id = ?",
+            (channel_id,),
+        ).fetchone()
+        pending_count = conn.execute(
+            "SELECT COUNT(*) FROM raw_messages WHERE channel_id = ? AND processed_at IS NULL", (channel_id,)
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Channel not found")
+    last_message_id, latest_known_message_id, last_polled_at = row
+    progress_percent = None
+    if latest_known_message_id and latest_known_message_id > 0:
+        progress_percent = min(100, round(last_message_id / latest_known_message_id * 100))
+    return {
+        "last_message_id": last_message_id,
+        "latest_known_message_id": latest_known_message_id,
+        "progress_percent": progress_percent,
+        "pending_count": pending_count,
+        "last_polled_at": format_gmt8(last_polled_at) if last_polled_at else None,
+    }
 
 
 @app.post("/admin/channels/{channel_id}/site-label")
@@ -766,12 +901,13 @@ def admin_channels_site_label(
 
 
 @app.get("/admin/branches")
-def admin_branches(request: Request, user: dict = Depends(require_admin)):
+def admin_branches(request: Request, user: dict = Depends(require_admin), geocode: str = ""):
     conn = get_conn()
     try:
         rows = conn.execute(
             """
             SELECT b.id, b.name, b.address, b.map_url, b.telegram_contact, b.wechat_contact, b.captured_info,
+                   b.latitude, b.longitude,
                    (SELECT COUNT(*) FROM channels c WHERE c.branch_id = b.id) AS channel_count
             FROM branches b
             ORDER BY b.name
@@ -788,11 +924,15 @@ def admin_branches(request: Request, user: dict = Depends(require_admin)):
             "telegram_contact": r[4],
             "wechat_contact": r[5],
             "captured_info": r[6],
-            "channel_count": r[7],
+            "latitude": r[7],
+            "longitude": r[8],
+            "channel_count": r[9],
         }
         for r in rows
     ]
-    return templates.TemplateResponse("admin_branches.html", {"request": request, "user": user, "branches": branches})
+    return templates.TemplateResponse(
+        "admin_branches.html", {"request": request, "user": user, "branches": branches, "geocode": geocode}
+    )
 
 
 @app.post("/admin/branches/{branch_id}")
@@ -803,22 +943,57 @@ def admin_branches_save(
     map_url: str = Form(""),
     telegram_contact: str = Form(""),
     wechat_contact: str = Form(""),
+    latitude: str = Form(""),
+    longitude: str = Form(""),
     user: dict = Depends(require_admin),
 ):
+    try:
+        lat_value = float(latitude) if latitude.strip() else None
+        lon_value = float(longitude) if longitude.strip() else None
+    except ValueError:
+        return RedirectResponse("/admin/branches?geocode=bad_coords", status_code=303)
+
     conn = get_conn()
     try:
         conn.execute(
             """
             UPDATE branches
-            SET address = ?, map_url = ?, telegram_contact = ?, wechat_contact = ?
+            SET address = ?, map_url = ?, telegram_contact = ?, wechat_contact = ?, latitude = ?, longitude = ?
             WHERE id = ?
             """,
-            (address or None, map_url or None, telegram_contact or None, wechat_contact or None, branch_id),
+            (
+                address or None,
+                map_url or None,
+                telegram_contact or None,
+                wechat_contact or None,
+                lat_value,
+                lon_value,
+                branch_id,
+            ),
         )
         conn.commit()
     finally:
         conn.close()
     return RedirectResponse("/admin/branches", status_code=303)
+
+
+@app.post("/admin/branches/{branch_id}/geocode")
+def admin_branches_geocode(branch_id: int, user: dict = Depends(require_admin)):
+    conn = get_conn()
+    try:
+        row = conn.execute("SELECT address FROM branches WHERE id = ?", (branch_id,)).fetchone()
+        if row is None or not row[0]:
+            return RedirectResponse("/admin/branches?geocode=no_address", status_code=303)
+        coords = _geocode_address(conn, row[0])
+        if coords is None:
+            return RedirectResponse("/admin/branches?geocode=failed", status_code=303)
+        conn.execute(
+            "UPDATE branches SET latitude = ?, longitude = ? WHERE id = ?", (coords[0], coords[1], branch_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse("/admin/branches?geocode=ok", status_code=303)
 
 
 # --- admin: unrecognized faces (review queue) ------------------------------------

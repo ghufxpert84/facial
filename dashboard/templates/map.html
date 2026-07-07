@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Map{% endblock %}
+{% block content %}
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<div class="flex items-center justify-between mb-2">
+  <h1 class="text-xl font-semibold">Branch map</h1>
+</div>
+<p class="text-sm text-slate-500 mb-6">
+  {{ branches|length }} branch{{ 'es' if branches|length != 1 }} plotted, using each branch's
+  address/contact details from Admin &rarr; Branches. Map tiles are served
+  by OpenStreetMap — no API key required to view this page.
+  {% if unplaced_count > 0 %}
+  <span class="text-amber-600">{{ unplaced_count }} branch{{ 'es' if unplaced_count != 1 }} not shown yet — set a latitude/longitude on {% if user.role == 'admin' %}<a href="/admin/branches" class="underline">Admin &rarr; Branches</a>{% else %}Admin &rarr; Branches{% endif %} first.</span>
+  {% endif %}
+</p>
+
+<div id="map" class="w-full rounded-xl border border-slate-200" style="height: 560px;"></div>
+
+<script>
+  const branches = {{ branches | tojson }};
+  const defaultCenter = [4.2105, 101.9758]; // Malaysia, used only when no branches have coordinates yet
+  const map = L.map('map').setView(defaultCenter, 6);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  }).addTo(map);
+
+  const bounds = [];
+  branches.forEach(function (b) {
+    const marker = L.marker([b.latitude, b.longitude]).addTo(map);
+    let popup = `<div style="font-size:13px;line-height:1.5"><strong>${b.name}</strong><br>`;
+    if (b.address) popup += `${b.address}<br>`;
+    popup += `${b.worker_count} worker${b.worker_count === 1 ? '' : 's'} currently here<br>`;
+    if (b.telegram_contact) popup += `Telegram: ${b.telegram_contact}<br>`;
+    if (b.wechat_contact) popup += `WeChat: ${b.wechat_contact}<br>`;
+    if (b.map_url) popup += `<a href="${b.map_url}" target="_blank">Open in maps</a>`;
+    popup += '</div>';
+    marker.bindPopup(popup);
+    bounds.push([b.latitude, b.longitude]);
+  });
+  if (bounds.length > 0) {
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+  }
+</script>
+{% endblock %}

@@ -117,6 +117,8 @@ CREATE TABLE IF NOT EXISTS branches (
     telegram_contact TEXT,
     wechat_contact TEXT,
     captured_info TEXT,
+    latitude REAL,
+    longitude REAL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 """
@@ -174,6 +176,16 @@ def get_conn():
         pass
     try:
         conn.execute("ALTER TABLE channels ADD COLUMN captured_info TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE branches ADD COLUMN latitude REAL")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass
+    try:
+        conn.execute("ALTER TABLE branches ADD COLUMN longitude REAL")
         conn.commit()
     except sqlite3.OperationalError:
         pass

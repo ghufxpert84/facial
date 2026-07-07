@@ -147,6 +147,25 @@ A worker's photo gallery uses an in-page **lightbox** (click a thumbnail to
 view full-size, or play a video, without leaving the page — Esc or click
 outside to close) instead of opening a new tab.
 
+The **Map** page (sidebar, visible to all logged-in users) plots every
+geocoded branch on an OpenStreetMap map (via Leaflet.js) — no API key
+needed to view it, since displaying OSM tiles is free. Each pin's popup
+shows the branch's address, how many workers are currently there (same
+"last known site" logic as the worker directory), and its Telegram/WeChat
+contacts. To place a branch on the map, go to **Admin → Branches** and
+either type in its latitude/longitude directly, or save an address and
+click "look up from address" to auto-fill coordinates via OpenStreetMap's
+free Nominatim geocoder (rate-limited, fine for occasional manual lookups).
+If you'd rather use a paid geocoding provider for higher volume/reliability,
+**Admin → Settings** has a provider switch (Nominatim / LocationIQ) and an
+API key field — only the address-to-coordinates lookup ever needs a key,
+never the map display itself.
+
+On **Admin → Channels**, the scan progress bar now updates live (polling
+every few seconds) instead of only refreshing on page reload — clicking
+**reset scan** drops it to 0% immediately and you can watch it climb back
+to 100% as telegram-listener re-scans the History Pull Limit window.
+
 Everything is stored in UTC (the correct practice — avoids ambiguity), but
 every timestamp shown in the UI is converted to **GMT+8** for display
 (column headers say so explicitly). If you're ever inspecting the database
@@ -200,6 +219,19 @@ Verified in this environment (no Docker/ML libs available here):
   fields, never clobbering a manual edit).
 - The worker directory's branch filter query (unfiltered, filtered to a
   specific branch, and a branch with zero workers).
+- The `branches.latitude`/`longitude` migration on a pre-existing database
+  (columns retrofit correctly, safe to run repeatedly across requests).
+- The `/map` page's worker-count-per-branch query and its `unplaced_count`
+  (branches missing coordinates) calculation, against seeded data.
+- The reset-scan progress math: confirmed `last_message_id` zeroing on
+  reset drops the percentage to exactly 0% (not stale), and climbs
+  correctly back to 100% as it's updated across simulated poll cycles.
+- Every dashboard template (including the new sidebar layout, Map page, and
+  updated Branches/Settings/Channels pages) actually renders with Jinja2
+  installed locally, both logged-out (login/setup) and logged-in
+  (admin/viewer), across empty and populated data — catches template
+  syntax errors before deploy, though it can't verify Tailwind/Leaflet
+  actually look right in a browser.
 
 Still needs testing once you have the stack running (on the NAS or a Docker
 dev machine) — none of `bcrypt`, `cryptography`, `itsdangerous`, or
@@ -227,3 +259,14 @@ dev machine) — none of `bcrypt`, `cryptography`, `itsdangerous`, or
   "database is locked" errors under heavy volume).
 - Container Manager project startup, reverse proxy/HTTPS, and the retention
   job actually purging old rows.
+- The "look up from address" button actually reaching Nominatim (or
+  LocationIQ, if configured) over the network and getting back usable
+  coordinates for a real address — `requests` isn't installed in this
+  environment, so only the surrounding SQL/route logic was verified, not
+  the live HTTP call.
+- The Map page rendering real OpenStreetMap tiles in a browser (Leaflet
+  loaded from a CDN — needs outbound internet from wherever you view the
+  dashboard, same as any browser-based map).
+- The Admin → Channels progress bar actually animating in a real browser
+  after clicking reset scan (the underlying DB math is verified above, but
+  the polling JS itself needs a browser to confirm).

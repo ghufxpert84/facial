@@ -36,6 +36,23 @@
       <input name="unrecognized_retention_hours" value="{{ settings.UNRECOGNIZED_RETENTION_HOURS or '72' }}" type="number" min="1" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
       <p class="text-xs text-slate-400 mt-1">How long an unmatched face stays in Admin &rarr; Unrecognized Faces before being auto-purged if nobody names or dismisses it.</p>
     </div>
+    <div class="border-t border-slate-200 pt-5">
+      <label class="block text-sm font-medium text-slate-700 mb-1">Map geocoding provider</label>
+      <select name="geocode_provider" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+        <option value="nominatim" {% if settings.GEOCODE_PROVIDER == 'nominatim' %}selected{% endif %}>OpenStreetMap Nominatim (free, no key required)</option>
+        <option value="locationiq" {% if settings.GEOCODE_PROVIDER == 'locationiq' %}selected{% endif %}>LocationIQ (needs API key, higher volume/reliability)</option>
+      </select>
+      <p class="text-xs text-slate-400 mt-1">
+        Used by the "look up from address" button on Admin &rarr; Branches to
+        place a branch on the map. Displaying the map itself never needs an
+        API key — this only affects turning an address into coordinates.
+      </p>
+    </div>
+    <div>
+      <label class="block text-sm font-medium text-slate-700 mb-1">LocationIQ API key</label>
+      <input name="geocode_api_key" type="password" placeholder="{{ 'Already set — leave blank to keep it' if settings.GEOCODE_API_KEY_SET else 'Only needed if using LocationIQ above' }}" class="w-full rounded-md border border-slate-300 px-3 py-2 text-sm">
+      <p class="text-xs text-slate-400 mt-1">Stored encrypted. Get a free-tier key at locationiq.com. Leave blank if using Nominatim.</p>
+    </div>
     <button type="submit" class="bg-slate-900 text-white rounded-md px-4 py-2 text-sm font-medium hover:bg-slate-800">Save settings</button>
   </form>
 </div>
