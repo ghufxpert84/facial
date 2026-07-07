@@ -86,8 +86,13 @@
         <div class="text-center flex-shrink-0 w-32">
           <div class="w-2.5 h-2.5 rounded-full {{ 'bg-indigo-600' if loop.index0 % 2 == 0 else 'bg-teal-600' }} mx-auto mb-1.5"></div>
           <span class="inline-block px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 text-[11px] font-medium">{{ m.site_label or m.channel_name }}</span>
-          <p class="text-[10px] text-slate-500 mt-1">{{ m.timestamp | gmt8 }}</p>
+          {% if m.sighting_count > 1 %}
+          <p class="text-[10px] text-slate-500 mt-1">{{ m.first_seen | gmt8 }} &rarr; {{ m.last_seen | gmt8 }}</p>
+          <p class="text-[10px] text-slate-400">{{ m.sighting_count }} sightings, last conf. {{ "%.2f"|format(m.confidence) }}</p>
+          {% else %}
+          <p class="text-[10px] text-slate-500 mt-1">{{ m.first_seen | gmt8 }}</p>
           <p class="text-[10px] text-slate-400">conf. {{ "%.2f"|format(m.confidence) }}</p>
+          {% endif %}
         </div>
         {% if not loop.last %}
         <div class="flex-shrink-0 w-10 pt-0.5 text-slate-300">

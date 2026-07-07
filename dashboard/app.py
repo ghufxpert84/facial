@@ -79,6 +79,36 @@ def _apply_captured_info_to_branch(conn, branch_id, about):
             )
 
 
+def _collapse_movement_by_site(movement_desc):
+    """Collapses consecutive sightings at the same site into a single
+    timeline entry, in chronological (oldest-first) order. Without this,
+    a worker who's simply been sitting at one branch across many poll
+    cycles shows a new timeline node -- and a "moved" arrow -- for every
+    single sighting, which reads as constant movement between the same
+    branch and itself. A new entry is only started when the site
+    actually differs from the previous sighting."""
+    visits = []
+    for m in reversed(movement_desc):  # movement_desc is newest-first; walk oldest-first
+        site_key = m["site_label"] or m["channel_name"]
+        if visits and visits[-1]["site_key"] == site_key:
+            visits[-1]["last_seen"] = m["timestamp"]
+            visits[-1]["confidence"] = m["confidence"]
+            visits[-1]["sighting_count"] += 1
+        else:
+            visits.append(
+                {
+                    "site_key": site_key,
+                    "site_label": m["site_label"],
+                    "channel_name": m["channel_name"],
+                    "first_seen": m["timestamp"],
+                    "last_seen": m["timestamp"],
+                    "confidence": m["confidence"],
+                    "sighting_count": 1,
+                }
+            )
+    return visits
+
+
 def _telegram_deep_link(contact):
     """t.me links open the Telegram app directly to a chat (mobile and
     desktop both handle this URI). Only works with a username, not a raw
@@ -550,7 +580,7 @@ def worker_detail(worker_id: int, request: Request, user: dict = Depends(require
             "user": user,
             "worker": worker,
             "movement": movement,
-            "movement_chronological": list(reversed(movement)),
+            "movement_chronological": _collapse_movement_by_site(movement),
             "current_branch": current_branch,
             "reference_photos": reference_photos,
             "gallery_count": gallery_count,
