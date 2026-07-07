@@ -17,9 +17,6 @@
       <span class="text-xs px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 flex-shrink-0">{{ b.worker_count }} worker{{ 's' if b.worker_count != 1 }}</span>
     </div>
     <p class="text-xs text-slate-500 mb-2">{{ b.address or "No address set" }}</p>
-    {% if b.description %}
-    <p class="text-xs text-slate-400 whitespace-pre-wrap">{{ b.description }}</p>
-    {% endif %}
     <p class="text-xs text-indigo-600 mt-3">View details &rarr;</p>
   </a>
   {% else %}

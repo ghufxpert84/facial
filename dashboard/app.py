@@ -354,16 +354,14 @@ def branch_directory(request: Request, user: dict = Depends(require_login)):
     try:
         rows = conn.execute(
             f"""
-            SELECT b.id, b.name, b.address, b.description, ({_CURRENT_WORKER_COUNT_SQL}) AS worker_count
+            SELECT b.id, b.name, b.address, ({_CURRENT_WORKER_COUNT_SQL}) AS worker_count
             FROM branches b
             ORDER BY b.name
             """
         ).fetchall()
     finally:
         conn.close()
-    branches = [
-        {"id": r[0], "name": r[1], "address": r[2], "description": r[3], "worker_count": r[4]} for r in rows
-    ]
+    branches = [{"id": r[0], "name": r[1], "address": r[2], "worker_count": r[3]} for r in rows]
     return templates.TemplateResponse("branch_directory.html", {"request": request, "user": user, "branches": branches})
 
 
